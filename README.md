@@ -64,6 +64,34 @@ functions/            # Firebase Cloud Functions endpoints
 - `fanoutMessageEvent`
 - `expireStatus24h`
 - `outboxRetryAssist`
+- `sendWhatsappText` (callable)
+- `sendWhatsappTemplate` (callable)
+- `whatsappWebhook` (HTTP webhook verify + inbound events)
+
+## WhatsApp Business Bridge (Beta)
+
+Implemented from WhatsApp Business Platform docs:
+- Cloud API text sending bridge.
+- Cloud API template-message sending bridge.
+- Webhook endpoint for verification and inbound event capture.
+- Flutter admin screen under Settings:
+  - `WhatsApp Business (Beta)`
+  - Send text/template to E.164 recipients for testing.
+
+### Function env vars
+
+Set these before deploying functions:
+- `WHATSAPP_ACCESS_TOKEN`
+- `WHATSAPP_PHONE_NUMBER_ID`
+- `WHATSAPP_VERIFY_TOKEN`
+- Optional: `WHATSAPP_GRAPH_VERSION` (default `v23.0`)
+
+### Webhook setup
+
+Use deployed function URL:
+- `https://<region>-<project-id>.cloudfunctions.net/whatsappWebhook`
+
+Verify token must match `WHATSAPP_VERIFY_TOKEN`.
 
 ## Run Locally
 

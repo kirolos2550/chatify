@@ -241,6 +241,12 @@ class _SettingsScaffold extends StatelessWidget {
             onTap: () => context.push('/backup'),
           ),
           ListTile(
+            leading: const Icon(Icons.storefront_outlined),
+            title: const Text('WhatsApp Business (Beta)'),
+            subtitle: const Text('Templates, webhook and cloud API bridge'),
+            onTap: () => context.push('/business/whatsapp'),
+          ),
+          ListTile(
             leading: const Icon(Icons.logout),
             title: Text(l10n.signOut),
             onTap: () => onSignOut(),

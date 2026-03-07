@@ -48,7 +48,6 @@ class StatusRepositoryImpl implements StatusRepository {
     return _firestore.collectionGroup(FirebasePaths.items).snapshots().map((
       snapshot,
     ) {
-      final now = DateTime.now().millisecondsSinceEpoch;
       return snapshot.docs
           .map((doc) {
             final data = doc.data();

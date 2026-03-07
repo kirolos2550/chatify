@@ -1,5 +1,6 @@
 import 'package:chatify/features/auth/presentation/pages/auth_page.dart';
 import 'package:chatify/features/backup/presentation/pages/backup_page.dart';
+import 'package:chatify/features/business/presentation/pages/whatsapp_business_page.dart';
 import 'package:chatify/features/calls/presentation/pages/calls_page.dart';
 import 'package:chatify/features/chats/presentation/pages/chat_list_page.dart';
 import 'package:chatify/features/chats/presentation/pages/chat_page.dart';
@@ -61,6 +62,10 @@ abstract final class AppRouter {
             ChatPage(conversationId: state.pathParameters['id'] ?? ''),
       ),
       GoRoute(path: '/search', builder: (context, state) => const SearchPage()),
+      GoRoute(
+        path: '/business/whatsapp',
+        builder: (context, state) => const WhatsAppBusinessPage(),
+      ),
       GoRoute(
         path: '/profile/:uid',
         builder: (context, state) =>
