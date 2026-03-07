@@ -7,6 +7,7 @@ import 'package:chatify/app/di/injection.dart';
 import 'package:chatify/core/common/result.dart';
 import 'package:chatify/core/data/repositories/in_memory_message_repository.dart';
 import 'package:chatify/core/data/services/device_identity_service.dart';
+import 'package:chatify/core/data/services/user_privacy_service.dart';
 import 'package:chatify/core/crypto/crypto_engine.dart';
 import 'package:chatify/core/crypto/signal_crypto_engine.dart';
 import 'package:chatify/core/domain/entities/conversation.dart';
@@ -52,10 +53,21 @@ class _ChatPageState extends State<ChatPage> {
   StreamSubscription<Duration>? _voicePositionSubscription;
   StreamSubscription<Duration?>? _voiceDurationSubscription;
   StreamSubscription<PlayerState>? _voicePlayerStateSubscription;
+  StreamSubscription<QuerySnapshot<Map<String, dynamic>>>? _typingSubscription;
+  StreamSubscription<DocumentSnapshot<Map<String, dynamic>>>?
+  _peerPresenceSubscription;
+  Timer? _typingDebounceTimer;
   bool _isMuted = false;
   bool _isBlocked = false;
   bool _isRecordingVoice = false;
+  bool _typingVisibilityEnabled = true;
+  bool _lastSeenVisible = true;
+  bool _peerTyping = false;
+  bool _peerOnline = false;
+  bool _peerAllowsLastSeen = true;
+  bool _isTypingPublished = false;
   DateTime? _voiceRecordingStartedAt;
+  DateTime? _peerLastSeenAt;
   String? _activeVoiceMessageId;
   Duration _activeVoicePosition = Duration.zero;
   Duration _activeVoiceDuration = Duration.zero;
@@ -78,6 +90,7 @@ class _ChatPageState extends State<ChatPage> {
       _resolveCurrentUserId(),
     )..start(widget.conversationId);
     _attachVoicePlayerListeners();
+    unawaited(_initRealtimeSignals());
   }
 
   @override
@@ -86,6 +99,7 @@ class _ChatPageState extends State<ChatPage> {
     if (oldWidget.conversationId != widget.conversationId) {
       _chatThreadCubit.start(widget.conversationId);
       unawaited(_resetVoicePlayback());
+      unawaited(_initRealtimeSignals());
     }
   }
 
@@ -95,6 +109,11 @@ class _ChatPageState extends State<ChatPage> {
       _audioRecorder.stop();
     }
     _audioRecorder.dispose();
+    _typingDebounceTimer?.cancel();
+    _typingSubscription?.cancel();
+    _peerPresenceSubscription?.cancel();
+    unawaited(_setTypingState(false));
+    unawaited(_setPresence(online: false));
     _voicePositionSubscription?.cancel();
     _voiceDurationSubscription?.cancel();
     _voicePlayerStateSubscription?.cancel();
@@ -123,7 +142,7 @@ class _ChatPageState extends State<ChatPage> {
         },
         child: Scaffold(
           appBar: AppBar(
-            title: Text('Conversation ${_shortId(widget.conversationId)}'),
+            title: _buildChatTitle(),
             actions: [
               IconButton(
                 tooltip: 'Voice call',
@@ -184,6 +203,11 @@ class _ChatPageState extends State<ChatPage> {
           ),
           body: Column(
             children: [
+              BlocBuilder<ChatThreadCubit, ChatThreadState>(
+                buildWhen: (previous, current) =>
+                    previous.messages != current.messages,
+                builder: (context, state) => _buildPinnedMessagesBanner(state),
+              ),
               Expanded(
                 child: BlocBuilder<ChatThreadCubit, ChatThreadState>(
                   builder: (context, state) {
@@ -225,6 +249,29 @@ class _ChatPageState extends State<ChatPage> {
                               child: Column(
                                 crossAxisAlignment: CrossAxisAlignment.start,
                                 children: [
+                                  if (message.isPinned)
+                                    Padding(
+                                      padding: const EdgeInsets.only(bottom: 6),
+                                      child: Row(
+                                        mainAxisSize: MainAxisSize.min,
+                                        children: [
+                                          Icon(
+                                            Icons.push_pin_outlined,
+                                            size: 14,
+                                            color: Theme.of(
+                                              context,
+                                            ).colorScheme.onSurfaceVariant,
+                                          ),
+                                          const SizedBox(width: 4),
+                                          Text(
+                                            'Pinned',
+                                            style: Theme.of(
+                                              context,
+                                            ).textTheme.labelSmall,
+                                          ),
+                                        ],
+                                      ),
+                                    ),
                                   if (message.replyToMessageId != null)
                                     Container(
                                       margin: const EdgeInsets.only(bottom: 6),
@@ -342,6 +389,7 @@ class _ChatPageState extends State<ChatPage> {
                                     decoration: const InputDecoration(
                                       hintText: 'Type message',
                                     ),
+                                    onChanged: _onComposerChanged,
                                     onSubmitted: (_) => _sendMessage(),
                                   ),
                                 ),
@@ -391,6 +439,279 @@ class _ChatPageState extends State<ChatPage> {
     );
   }
 
+  Widget _buildChatTitle() {
+    final subtitle = _chatSubtitleText();
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Text('Conversation ${_shortId(widget.conversationId)}'),
+        if (subtitle != null)
+          Text(subtitle, style: Theme.of(context).textTheme.bodySmall),
+      ],
+    );
+  }
+
+  String? _chatSubtitleText() {
+    if (_peerTyping) {
+      return 'typing...';
+    }
+    if (_peerOnline) {
+      return 'online';
+    }
+    if (_peerAllowsLastSeen && _peerLastSeenAt != null) {
+      return 'last seen ${_formatLastSeen(_peerLastSeenAt!)}';
+    }
+    return null;
+  }
+
+  String _formatLastSeen(DateTime value) {
+    final local = value.toLocal();
+    final now = DateTime.now();
+    final sameDay =
+        local.year == now.year &&
+        local.month == now.month &&
+        local.day == now.day;
+    final h = local.hour.toString().padLeft(2, '0');
+    final m = local.minute.toString().padLeft(2, '0');
+    if (sameDay) {
+      return '$h:$m';
+    }
+    final d = local.day.toString().padLeft(2, '0');
+    final mo = local.month.toString().padLeft(2, '0');
+    return '$d/$mo $h:$m';
+  }
+
+  Widget _buildPinnedMessagesBanner(ChatThreadState state) {
+    final pinned = state.messages
+        .where((item) => item.isPinned && !item.isDeleted)
+        .toList(growable: false);
+    if (pinned.isEmpty) {
+      return const SizedBox.shrink();
+    }
+    final visible = pinned.take(3).toList(growable: false);
+    return Container(
+      width: double.infinity,
+      margin: const EdgeInsets.fromLTRB(12, 8, 12, 0),
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+      decoration: BoxDecoration(
+        color: Theme.of(context).colorScheme.surfaceContainerHighest,
+        borderRadius: BorderRadius.circular(12),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            'Pinned messages (${pinned.length}/3)',
+            style: Theme.of(context).textTheme.labelLarge,
+          ),
+          const SizedBox(height: 6),
+          ...visible.map(
+            (message) => Row(
+              children: [
+                Icon(
+                  Icons.push_pin_outlined,
+                  size: 14,
+                  color: Theme.of(context).colorScheme.primary,
+                ),
+                const SizedBox(width: 6),
+                Expanded(
+                  child: Text(
+                    message.text,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ),
+                IconButton(
+                  tooltip: 'Unpin',
+                  icon: const Icon(Icons.close, size: 16),
+                  onPressed: () => _togglePinMessage(message),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _initRealtimeSignals() async {
+    _typingSubscription?.cancel();
+    _peerPresenceSubscription?.cancel();
+    _typingDebounceTimer?.cancel();
+    _peerTyping = false;
+    _peerOnline = false;
+    _peerLastSeenAt = null;
+    _peerAllowsLastSeen = true;
+    _isTypingPublished = false;
+
+    if (Firebase.apps.isEmpty) {
+      return;
+    }
+    final uid = FirebaseAuth.instance.currentUser?.uid;
+    if (uid == null || uid.isEmpty) {
+      return;
+    }
+
+    final privacySettings = await UserPrivacyService.loadMySettings();
+    if (!mounted) {
+      return;
+    }
+    setState(() {
+      _typingVisibilityEnabled = privacySettings.typingVisibilityEnabled;
+      _lastSeenVisible = privacySettings.lastSeenVisible;
+    });
+    await _setPresence(online: true);
+
+    final peer = await _resolveProfileUserIdForConversation();
+    if (!mounted) {
+      return;
+    }
+    _subscribeTyping(uid);
+    if (peer != null && peer != uid) {
+      _subscribePeerPresence(peer);
+    }
+  }
+
+  void _subscribeTyping(String currentUid) {
+    _typingSubscription = FirebaseFirestore.instance
+        .collection(FirebasePaths.conversations)
+        .doc(widget.conversationId)
+        .collection(FirebasePaths.typing)
+        .snapshots()
+        .listen((snapshot) {
+          var peerTyping = false;
+          for (final doc in snapshot.docs) {
+            if (doc.id == currentUid) {
+              continue;
+            }
+            final data = doc.data();
+            if (data['isVisible'] == false) {
+              continue;
+            }
+            if (data['isTyping'] != true) {
+              continue;
+            }
+            final updatedAt = _toDateTimeValue(data['updatedAt']);
+            if (updatedAt != null &&
+                DateTime.now().toUtc().difference(updatedAt) >
+                    const Duration(seconds: 8)) {
+              continue;
+            }
+            peerTyping = true;
+            break;
+          }
+          if (!mounted) {
+            return;
+          }
+          setState(() => _peerTyping = peerTyping);
+        });
+  }
+
+  void _subscribePeerPresence(String peerUid) {
+    _peerPresenceSubscription = FirebaseFirestore.instance
+        .collection(FirebasePaths.presence)
+        .doc(peerUid)
+        .snapshots()
+        .listen((snapshot) {
+          final data = snapshot.data() ?? const <String, dynamic>{};
+          if (!mounted) {
+            return;
+          }
+          setState(() {
+            _peerOnline = data['isOnline'] == true;
+            _peerAllowsLastSeen = data['showLastSeen'] is bool
+                ? data['showLastSeen'] as bool
+                : true;
+            _peerLastSeenAt =
+                _toDateTimeValue(data['lastSeenAt']) ??
+                _toDateTimeValue(data['updatedAt']);
+          });
+        });
+  }
+
+  void _onComposerChanged(String rawValue) {
+    if (_isBlocked) {
+      return;
+    }
+    final hasContent = rawValue.trim().isNotEmpty;
+    if (!hasContent) {
+      _typingDebounceTimer?.cancel();
+      unawaited(_setTypingState(false));
+      return;
+    }
+    if (!_typingVisibilityEnabled) {
+      return;
+    }
+    unawaited(_setTypingState(true));
+    _typingDebounceTimer?.cancel();
+    _typingDebounceTimer = Timer(const Duration(seconds: 2), () {
+      unawaited(_setTypingState(false));
+    });
+  }
+
+  Future<void> _setTypingState(bool typing) async {
+    if (Firebase.apps.isEmpty) {
+      return;
+    }
+    final uid = FirebaseAuth.instance.currentUser?.uid;
+    if (uid == null || uid.isEmpty) {
+      return;
+    }
+    final effectiveTyping = typing && _typingVisibilityEnabled;
+    if (_isTypingPublished == effectiveTyping && !typing) {
+      return;
+    }
+    _isTypingPublished = effectiveTyping;
+    try {
+      await FirebaseFirestore.instance
+          .collection(FirebasePaths.conversations)
+          .doc(widget.conversationId)
+          .collection(FirebasePaths.typing)
+          .doc(uid)
+          .set({
+            'isTyping': effectiveTyping,
+            'isVisible': _typingVisibilityEnabled,
+            'updatedAt': FieldValue.serverTimestamp(),
+          }, SetOptions(merge: true));
+    } catch (_) {
+      // Skip transient typing updates errors.
+    }
+  }
+
+  Future<void> _setPresence({required bool online}) async {
+    if (Firebase.apps.isEmpty) {
+      return;
+    }
+    final uid = FirebaseAuth.instance.currentUser?.uid;
+    if (uid == null || uid.isEmpty) {
+      return;
+    }
+    try {
+      await FirebaseFirestore.instance
+          .collection(FirebasePaths.presence)
+          .doc(uid)
+          .set({
+            'isOnline': online,
+            'showLastSeen': _lastSeenVisible,
+            'lastSeenAt': FieldValue.serverTimestamp(),
+            'updatedAt': FieldValue.serverTimestamp(),
+          }, SetOptions(merge: true));
+    } catch (_) {
+      // Presence state is best-effort only.
+    }
+  }
+
+  DateTime? _toDateTimeValue(Object? value) {
+    if (value is Timestamp) {
+      return value.toDate().toUtc();
+    }
+    if (value is int) {
+      return DateTime.fromMillisecondsSinceEpoch(value, isUtc: true);
+    }
+    return null;
+  }
+
   Future<void> _sendMessage() async {
     if (_isBlocked) {
       _showSnack('Unblock this contact first');
@@ -399,6 +720,8 @@ class _ChatPageState extends State<ChatPage> {
     final sent = await _chatThreadCubit.sendText(_messageController.text);
     if (sent && mounted) {
       _messageController.clear();
+      _onComposerChanged('');
+      await _setTypingState(false);
     }
   }
 
@@ -731,7 +1054,43 @@ class _ChatPageState extends State<ChatPage> {
     if (!mounted || reason == null || reason.trim().isEmpty) {
       return;
     }
-    _showSnack('Report submitted');
+    final normalizedReason = reason.trim();
+    if (normalizedReason.length < 5) {
+      _showSnack('Please provide more details in the report');
+      return;
+    }
+    if (Firebase.apps.isEmpty) {
+      _showSnack('Reports are unavailable in demo mode');
+      return;
+    }
+    final reporterId = FirebaseAuth.instance.currentUser?.uid;
+    if (reporterId == null || reporterId.isEmpty) {
+      _showSnack('Sign in first to submit reports');
+      return;
+    }
+    final targetUserId = await _resolveProfileUserIdForConversation();
+    try {
+      await FirebaseFirestore.instance
+          .collection(FirebasePaths.abuseReports)
+          .add({
+            'type': 'contact',
+            'reporterId': reporterId,
+            'targetUserId': targetUserId,
+            'conversationId': widget.conversationId,
+            'reason': normalizedReason,
+            'status': 'open',
+            'createdAt': FieldValue.serverTimestamp(),
+          });
+      if (!mounted) {
+        return;
+      }
+      _showSnack('Report submitted');
+    } catch (error) {
+      if (!mounted) {
+        return;
+      }
+      _showSnack('Failed to submit report: $error');
+    }
   }
 
   Future<void> _toggleBlockContact() async {
@@ -1421,6 +1780,16 @@ class _ChatPageState extends State<ChatPage> {
                   ),
                   onTap: () => Navigator.of(context).pop(_MessageAction.star),
                 ),
+              if (!message.isDeleted)
+                ListTile(
+                  leading: Icon(
+                    message.isPinned ? Icons.push_pin : Icons.push_pin_outlined,
+                  ),
+                  title: Text(
+                    message.isPinned ? 'Unpin message' : 'Pin message',
+                  ),
+                  onTap: () => Navigator.of(context).pop(_MessageAction.pin),
+                ),
               ListTile(
                 leading: const Icon(Icons.info_outline),
                 title: const Text('Info'),
@@ -1479,6 +1848,9 @@ class _ChatPageState extends State<ChatPage> {
       case _MessageAction.star:
         await _toggleStarMessage(message);
         break;
+      case _MessageAction.pin:
+        await _togglePinMessage(message);
+        break;
     }
   }
 
@@ -1530,6 +1902,13 @@ class _ChatPageState extends State<ChatPage> {
             ? 'Removed from starred messages'
             : 'Added to starred messages',
       );
+    }
+  }
+
+  Future<void> _togglePinMessage(ChatMessageView message) async {
+    final success = await _chatThreadCubit.toggleMessagePin(message);
+    if (success && mounted) {
+      _showSnack(message.isPinned ? 'Message unpinned' : 'Message pinned');
     }
   }
 
@@ -1669,6 +2048,7 @@ class _ChatPageState extends State<ChatPage> {
           'Deleted at: $deletedAt\n'
           'Reply to: ${message.replyToMessageId ?? '-'}\n'
           'Starred: ${message.isStarred}\n'
+          'Pinned: ${message.isPinned}\n'
           'Reactions: ${message.reactionsByUser.values.join(', ')}',
         ),
         actions: [
@@ -1907,7 +2287,8 @@ class _ChatPageState extends State<ChatPage> {
         ? ''
         : ' - ${message.type.name}';
     final starred = message.isStarred ? ' - starred' : '';
-    return '$h:$m$kind$edited$starred';
+    final pinned = message.isPinned ? ' - pinned' : '';
+    return '$h:$m$kind$edited$starred$pinned';
   }
 
   Widget _buildMessageMeta(BuildContext context, ChatMessageView message) {
@@ -2069,7 +2450,17 @@ class _ChatPageState extends State<ChatPage> {
   }
 }
 
-enum _MessageAction { reply, copy, info, edit, delete, forward, react, star }
+enum _MessageAction {
+  reply,
+  copy,
+  info,
+  edit,
+  delete,
+  forward,
+  react,
+  star,
+  pin,
+}
 
 enum _DeleteScope { forMe, forEveryone }
 

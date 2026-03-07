@@ -18,6 +18,7 @@ class Message extends Equatable {
     this.deliveredToUserIds = const [],
     this.readByUserIds = const [],
     this.starredByUserIds = const [],
+    this.pinnedByUserIds = const [],
     this.reactionsByUser = const {},
     this.replyToMessageId,
     this.e2eeVersion = 'signal-v1',
@@ -36,6 +37,7 @@ class Message extends Equatable {
   final List<String> deliveredToUserIds;
   final List<String> readByUserIds;
   final List<String> starredByUserIds;
+  final List<String> pinnedByUserIds;
   final Map<String, String> reactionsByUser;
   final LocalMessageStatus localStatus;
   final String deviceId;
@@ -57,6 +59,7 @@ class Message extends Equatable {
     deliveredToUserIds,
     readByUserIds,
     starredByUserIds,
+    pinnedByUserIds,
     reactionsByUser,
     localStatus,
     deviceId,

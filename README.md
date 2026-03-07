@@ -11,6 +11,8 @@ Production-oriented Flutter messaging foundation aligned with:
 - Voice notes (record, upload, play/pause, seek)
 - Per-user archive / unarchive chats
 - User profile pages (name, phone, avatar, shared groups)
+- Message reactions, stars, and pinned messages
+- Privacy controls persisted in Firebase (read receipts, last seen, typing visibility)
 
 ## Project Structure
 
@@ -36,6 +38,7 @@ functions/            # Firebase Cloud Functions endpoints
 
 - `users/{uid}`
 - `users/{uid}/devices/{deviceId}`
+- `users/{uid}/privacy/settings`
 - `conversations/{conversationId}`
 - `conversations/{conversationId}/members/{uid}`
 - `conversations/{conversationId}/messages/{messageId}`
@@ -44,6 +47,7 @@ functions/            # Firebase Cloud Functions endpoints
 - `status/{uid}/items/{statusId}`
 - `calls/{callId}`
 - `presence/{uid}`
+- `abuse_reports/{reportId}`
 - `prekeys/{uid_deviceId}`
 - `outbox_acks/{uid}/{clientMessageId}`
 
@@ -189,6 +193,17 @@ Verify token must match `WHATSAPP_VERIFY_TOKEN`.
 - Pin / Unpin conversation from chat list long-press menu.
 - Archived view toggle in chats screen.
 - Message reactions (emoji) and starred messages.
+- Pinned messages inside chat threads (up to 3 per user per chat).
+- Real report-contact submission to Firestore (`abuse_reports`).
+- Basic anti-spam send limiter in chat thread flow.
+- Privacy controls connected to backend:
+  - Read receipts toggle persisted and enforced when marking messages read.
+  - Last-seen visibility persisted and reflected in presence documents.
+  - Typing visibility persisted and used for typing indicator publish/hide.
+- Chat header subtitle for direct chats:
+  - Typing state
+  - Online state
+  - Last seen (when peer allows visibility)
 - User profile page:
   - Public name, phone and avatar display
   - Self profile editing (display name, about, avatar URL)
@@ -210,20 +225,36 @@ Verify token must match `WHATSAPP_VERIFY_TOKEN`.
 - Archive chats (per user).
 - Pinned chats (per user).
 - Message reactions and starred messages.
+- Pinned messages (per user).
+- Basic presence/typing/last-seen privacy controls.
+- In-app contact abuse reports.
 
 ### Missing or partial vs WhatsApp
 - Full Signal-protocol E2EE with audited key management.
 - Multi-device key sync and safety-number verification UX.
 - Reliable push notification delivery pipeline at scale.
-- Pinned messages.
 - Chat backup/restore parity with production-grade encryption.
-- Robust anti-spam/abuse controls and account recovery flows.
-- Presence/typing/last-seen privacy controls parity.
+- Robust anti-spam/abuse controls and account recovery flows (currently basic only).
+- Presence/typing/last-seen privacy controls parity (currently basic only).
 - End-to-end encrypted calls pipeline parity.
+
+### Not implemented yet and why
+- Full audited Signal protocol stack:
+  - Needs dedicated cryptographic bindings, key lifecycle, migration, and external security review. Current adapter is placeholder-oriented.
+- Safety-number verification + multi-device trust UX:
+  - Requires device identity graph, trust-change detection, and cross-device key sync backend.
+- Push delivery pipeline parity at scale:
+  - Requires server fanout workers, retry queues, token hygiene, observability, and SLA-focused infra.
+- Backup parity with production-grade encryption:
+  - Current backup flow is not full encrypted message-history export/import parity across devices.
+- Robust anti-abuse + account recovery:
+  - We added reporting and a basic send limiter, but robust moderation needs backend policy engine, abuse scoring, review tooling, and recovery processes.
+- E2EE calls parity:
+  - Current call signaling is present, but full encrypted media-session parity needs hardened WebRTC key/session architecture.
 
 ### Priority roadmap to close gap
 1. Replace placeholder crypto with audited Signal implementation.
 2. Add key verification UX and trust-change warnings.
 3. Harden media pipeline (upload retries, background resume, caching, media player UX).
-4. Expand chat productivity features (reactions, pins, star, bulk actions).
+4. Expand advanced chat productivity features (bulk actions, message management tools, search quality).
 5. Strengthen reliability and moderation (rate limits, abuse reports, recovery).

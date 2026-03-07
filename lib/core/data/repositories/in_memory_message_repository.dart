@@ -67,6 +67,7 @@ class InMemoryMessageRepository implements MessageRepository {
         replyToMessageId: current.replyToMessageId,
         e2eeVersion: current.e2eeVersion,
         starredByUserIds: current.starredByUserIds,
+        pinnedByUserIds: current.pinnedByUserIds,
         reactionsByUser: current.reactionsByUser,
       );
       _emit(conversationId);
@@ -106,6 +107,7 @@ class InMemoryMessageRepository implements MessageRepository {
         replyToMessageId: current.replyToMessageId,
         e2eeVersion: current.e2eeVersion,
         starredByUserIds: current.starredByUserIds,
+        pinnedByUserIds: current.pinnedByUserIds,
         reactionsByUser: current.reactionsByUser,
       );
       _emit(conversationId);
@@ -168,6 +170,7 @@ class InMemoryMessageRepository implements MessageRepository {
           replyToMessageId: current.replyToMessageId,
           e2eeVersion: current.e2eeVersion,
           starredByUserIds: current.starredByUserIds,
+          pinnedByUserIds: current.pinnedByUserIds,
           reactionsByUser: current.reactionsByUser,
         );
       }
@@ -232,6 +235,7 @@ class InMemoryMessageRepository implements MessageRepository {
         replyToMessageId: current.replyToMessageId,
         e2eeVersion: current.e2eeVersion,
         starredByUserIds: current.starredByUserIds,
+        pinnedByUserIds: current.pinnedByUserIds,
         reactionsByUser: reactions,
       );
       _emit(conversationId);
@@ -279,6 +283,55 @@ class InMemoryMessageRepository implements MessageRepository {
         replyToMessageId: current.replyToMessageId,
         e2eeVersion: current.e2eeVersion,
         starredByUserIds: starredBy.toList(growable: false),
+        pinnedByUserIds: current.pinnedByUserIds,
+        reactionsByUser: current.reactionsByUser,
+      );
+      _emit(conversationId);
+      return const Success(null);
+    } catch (error) {
+      return FailureResult(Failure(error.toString()));
+    }
+  }
+
+  @override
+  Future<Result<void>> setMessagePinned({
+    required String conversationId,
+    required String messageId,
+    required String userId,
+    required bool pinned,
+  }) async {
+    try {
+      final list = _messagesFor(conversationId);
+      final index = list.indexWhere((item) => item.id == messageId);
+      if (index < 0) {
+        return const FailureResult(Failure('Message not found'));
+      }
+      final current = list[index];
+      final pinnedBy = current.pinnedByUserIds.toSet();
+      if (pinned) {
+        pinnedBy.add(userId);
+      } else {
+        pinnedBy.remove(userId);
+      }
+      list[index] = Message(
+        id: current.id,
+        conversationId: current.conversationId,
+        senderId: current.senderId,
+        type: current.type,
+        ciphertext: current.ciphertext,
+        clientTimestamp: current.clientTimestamp,
+        serverSeq: current.serverSeq,
+        editedAt: current.editedAt,
+        deletedForAllAt: current.deletedForAllAt,
+        deletedForUserIds: current.deletedForUserIds,
+        deliveredToUserIds: current.deliveredToUserIds,
+        readByUserIds: current.readByUserIds,
+        localStatus: current.localStatus,
+        deviceId: current.deviceId,
+        replyToMessageId: current.replyToMessageId,
+        e2eeVersion: current.e2eeVersion,
+        starredByUserIds: current.starredByUserIds,
+        pinnedByUserIds: pinnedBy.toList(growable: false),
         reactionsByUser: current.reactionsByUser,
       );
       _emit(conversationId);

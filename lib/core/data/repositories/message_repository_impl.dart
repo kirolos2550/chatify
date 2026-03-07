@@ -63,6 +63,7 @@ class MessageRepositoryImpl implements MessageRepository {
             'deliveredToUserIds': const <String>[],
             'readByUserIds': const <String>[],
             'starredByUserIds': const <String>[],
+            'pinnedByUserIds': const <String>[],
             'reactionsByUser': const <String, String>{},
           });
 
@@ -160,6 +161,7 @@ class MessageRepositoryImpl implements MessageRepository {
     required String userId,
   }) async {
     try {
+      final readReceiptsEnabled = await _isReadReceiptsEnabled(userId);
       final snapshot = await _firestore
           .collection(FirebasePaths.conversations)
           .doc(conversationId)
@@ -186,16 +188,21 @@ class MessageRepositoryImpl implements MessageRepository {
 
         final deliveredTo = _asStringList(data['deliveredToUserIds']).toSet();
         final readBy = _asStringList(data['readByUserIds']).toSet();
-        final didChange = deliveredTo.add(userId) | readBy.add(userId);
+        final deliveredChanged = deliveredTo.add(userId);
+        final readChanged = readReceiptsEnabled ? readBy.add(userId) : false;
+        final didChange = deliveredChanged || readChanged;
         if (!didChange) {
           continue;
         }
 
         updates++;
-        batch.set(doc.reference, {
+        final payload = <String, Object?>{
           'deliveredToUserIds': deliveredTo.toList(growable: false),
-          'readByUserIds': readBy.toList(growable: false),
-        }, SetOptions(merge: true));
+        };
+        if (readReceiptsEnabled) {
+          payload['readByUserIds'] = readBy.toList(growable: false);
+        }
+        batch.set(doc.reference, payload, SetOptions(merge: true));
       }
 
       if (updates > 0) {
@@ -289,6 +296,30 @@ class MessageRepositoryImpl implements MessageRepository {
     }
   }
 
+  @override
+  Future<Result<void>> setMessagePinned({
+    required String conversationId,
+    required String messageId,
+    required String userId,
+    required bool pinned,
+  }) async {
+    try {
+      await _firestore
+          .collection(FirebasePaths.conversations)
+          .doc(conversationId)
+          .collection(FirebasePaths.messages)
+          .doc(messageId)
+          .set({
+            'pinnedByUserIds': pinned
+                ? FieldValue.arrayUnion([userId])
+                : FieldValue.arrayRemove([userId]),
+          }, SetOptions(merge: true));
+      return const Success(null);
+    } catch (e) {
+      return FailureResult(Failure(e.toString()));
+    }
+  }
+
   Message _fromDoc(
     String conversationId,
     QueryDocumentSnapshot<Map<String, dynamic>> doc,
@@ -316,6 +347,7 @@ class MessageRepositoryImpl implements MessageRepository {
       deliveredToUserIds: _asStringList(data['deliveredToUserIds']),
       readByUserIds: _asStringList(data['readByUserIds']),
       starredByUserIds: _asStringList(data['starredByUserIds']),
+      pinnedByUserIds: _asStringList(data['pinnedByUserIds']),
       reactionsByUser: _asStringMap(data['reactionsByUser']),
     );
   }
@@ -351,5 +383,23 @@ class MessageRepositoryImpl implements MessageRepository {
       }
     });
     return Map<String, String>.unmodifiable(output);
+  }
+
+  Future<bool> _isReadReceiptsEnabled(String uid) async {
+    try {
+      final snapshot = await _firestore
+          .collection(FirebasePaths.users)
+          .doc(uid)
+          .collection(FirebasePaths.privacy)
+          .doc(FirebasePaths.settings)
+          .get();
+      final value = snapshot.data()?['readReceiptsEnabled'];
+      if (value is bool) {
+        return value;
+      }
+    } catch (_) {
+      // fallback to enabled when privacy doc is unavailable
+    }
+    return true;
   }
 }

@@ -47,4 +47,11 @@ abstract interface class MessageRepository {
     required String userId,
     required bool starred,
   });
+
+  Future<Result<void>> setMessagePinned({
+    required String conversationId,
+    required String messageId,
+    required String userId,
+    required bool pinned,
+  });
 }

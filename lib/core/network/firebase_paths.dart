@@ -1,6 +1,8 @@
 abstract final class FirebasePaths {
   static const users = 'users';
   static const devices = 'devices';
+  static const privacy = 'privacy';
+  static const settings = 'settings';
   static const conversations = 'conversations';
   static const members = 'members';
   static const messages = 'messages';
@@ -12,4 +14,5 @@ abstract final class FirebasePaths {
   static const presence = 'presence';
   static const prekeys = 'prekeys';
   static const outboxAcks = 'outbox_acks';
+  static const abuseReports = 'abuse_reports';
 }

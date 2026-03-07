@@ -1,12 +1,11 @@
 import 'package:chatify/app/di/injection.dart';
 import 'package:chatify/app/localization/app_locale_controller.dart';
+import 'package:chatify/core/data/services/user_privacy_service.dart';
 import 'package:chatify/core/domain/repositories/auth_repository.dart';
-import 'package:chatify/features/settings/presentation/bloc/settings_cubit.dart';
+import 'package:chatify/l10n/app_localizations.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_core/firebase_core.dart';
-import 'package:chatify/l10n/app_localizations.dart';
 import 'package:flutter/material.dart';
-import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:go_router/go_router.dart';
 
 class SettingsPage extends StatefulWidget {
@@ -17,12 +16,19 @@ class SettingsPage extends StatefulWidget {
 }
 
 class _SettingsPageState extends State<SettingsPage> {
-  bool _localReadReceipts = true;
-  bool _localLastSeen = true;
+  bool _readReceiptsEnabled = true;
+  bool _lastSeenVisible = true;
+  bool _typingVisibilityEnabled = true;
+  bool _privacyUpdating = false;
 
-  bool get _hasWiredSettings => getIt.isRegistered<SettingsCubit>();
   bool get _hasAuthRepository =>
       getIt.isRegistered<AuthRepository>() && Firebase.apps.isNotEmpty;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadPrivacySettings();
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -38,45 +44,93 @@ class _SettingsPageState extends State<SettingsPage> {
         ? user!.phoneNumber!.trim()
         : l10n.profileSubtitle;
 
-    if (!_hasWiredSettings) {
-      return _SettingsScaffold(
-        profileName: resolvedProfileName,
-        profileSubtitle: resolvedProfileSubtitle,
-        profileAvatarUrl: user?.photoURL,
-        readReceipts: _localReadReceipts,
-        lastSeenVisible: _localLastSeen,
-        onReadReceiptsChanged: (value) =>
-            setState(() => _localReadReceipts = value),
-        onLastSeenChanged: (value) => setState(() => _localLastSeen = value),
-        currentLanguageCode: AppLocaleController.instance.localeCode,
-        onChangeLanguage: _changeLanguage,
-        onOpenProfile: _openMyProfile,
-        onSignOut: _signOut,
+    return _SettingsScaffold(
+      profileName: resolvedProfileName,
+      profileSubtitle: resolvedProfileSubtitle,
+      profileAvatarUrl: user?.photoURL,
+      readReceipts: _readReceiptsEnabled,
+      lastSeenVisible: _lastSeenVisible,
+      typingVisibilityEnabled: _typingVisibilityEnabled,
+      privacyUpdating: _privacyUpdating,
+      onReadReceiptsChanged: (value) =>
+          _updatePrivacy(readReceiptsEnabled: value),
+      onLastSeenChanged: (value) => _updatePrivacy(lastSeenVisible: value),
+      onTypingVisibilityChanged: (value) =>
+          _updatePrivacy(typingVisibilityEnabled: value),
+      currentLanguageCode: AppLocaleController.instance.localeCode,
+      onChangeLanguage: _changeLanguage,
+      onOpenProfile: _openMyProfile,
+      onSignOut: _signOut,
+    );
+  }
+
+  Future<void> _loadPrivacySettings() async {
+    if (Firebase.apps.isEmpty || FirebaseAuth.instance.currentUser == null) {
+      return;
+    }
+    setState(() => _privacyUpdating = true);
+    try {
+      final settings = await UserPrivacyService.loadMySettings();
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _readReceiptsEnabled = settings.readReceiptsEnabled;
+        _lastSeenVisible = settings.lastSeenVisible;
+        _typingVisibilityEnabled = settings.typingVisibilityEnabled;
+      });
+    } catch (error) {
+      if (!mounted) {
+        return;
+      }
+      _showSnack('Failed to load privacy settings: $error');
+    } finally {
+      if (mounted) {
+        setState(() => _privacyUpdating = false);
+      }
+    }
+  }
+
+  Future<void> _updatePrivacy({
+    bool? readReceiptsEnabled,
+    bool? lastSeenVisible,
+    bool? typingVisibilityEnabled,
+  }) async {
+    if (Firebase.apps.isEmpty || FirebaseAuth.instance.currentUser == null) {
+      _showSnack('Sign in first to change privacy settings');
+      return;
+    }
+    setState(() {
+      if (readReceiptsEnabled != null) {
+        _readReceiptsEnabled = readReceiptsEnabled;
+      }
+      if (lastSeenVisible != null) {
+        _lastSeenVisible = lastSeenVisible;
+      }
+      if (typingVisibilityEnabled != null) {
+        _typingVisibilityEnabled = typingVisibilityEnabled;
+      }
+      _privacyUpdating = true;
+    });
+
+    try {
+      await UserPrivacyService.updateMySettings(
+        readReceiptsEnabled: readReceiptsEnabled,
+        lastSeenVisible: lastSeenVisible,
+        typingVisibilityEnabled: typingVisibilityEnabled,
       );
+    } catch (error) {
+      if (!mounted) {
+        return;
+      }
+      _showSnack('Failed to update privacy settings: $error');
+      await _loadPrivacySettings();
+      return;
     }
 
-    return BlocProvider(
-      create: (_) => getIt<SettingsCubit>(),
-      child: BlocBuilder<SettingsCubit, SettingsState>(
-        builder: (context, state) {
-          return _SettingsScaffold(
-            profileName: resolvedProfileName,
-            profileSubtitle: resolvedProfileSubtitle,
-            profileAvatarUrl: user?.photoURL,
-            readReceipts: state.readReceiptsEnabled,
-            lastSeenVisible: state.lastSeenVisible,
-            onReadReceiptsChanged: (value) =>
-                context.read<SettingsCubit>().toggleReadReceipts(value),
-            onLastSeenChanged: (value) =>
-                setState(() => _localLastSeen = value),
-            currentLanguageCode: AppLocaleController.instance.localeCode,
-            onChangeLanguage: _changeLanguage,
-            onOpenProfile: _openMyProfile,
-            onSignOut: _signOut,
-          );
-        },
-      ),
-    );
+    if (mounted) {
+      setState(() => _privacyUpdating = false);
+    }
   }
 
   Future<void> _openMyProfile() async {
@@ -167,8 +221,11 @@ class _SettingsScaffold extends StatelessWidget {
     this.profileAvatarUrl,
     required this.readReceipts,
     required this.lastSeenVisible,
+    required this.typingVisibilityEnabled,
+    required this.privacyUpdating,
     required this.onReadReceiptsChanged,
     required this.onLastSeenChanged,
+    required this.onTypingVisibilityChanged,
     required this.currentLanguageCode,
     required this.onChangeLanguage,
     required this.onOpenProfile,
@@ -180,8 +237,11 @@ class _SettingsScaffold extends StatelessWidget {
   final String? profileAvatarUrl;
   final bool readReceipts;
   final bool lastSeenVisible;
+  final bool typingVisibilityEnabled;
+  final bool privacyUpdating;
   final ValueChanged<bool> onReadReceiptsChanged;
   final ValueChanged<bool> onLastSeenChanged;
+  final ValueChanged<bool> onTypingVisibilityChanged;
   final String currentLanguageCode;
   final Future<void> Function() onChangeLanguage;
   final Future<void> Function() onOpenProfile;
@@ -201,6 +261,7 @@ class _SettingsScaffold extends StatelessWidget {
       appBar: AppBar(title: Text(l10n.settings)),
       body: ListView(
         children: [
+          if (privacyUpdating) const LinearProgressIndicator(minHeight: 2),
           ListTile(
             leading: CircleAvatar(
               backgroundImage: avatarImage,
@@ -221,12 +282,17 @@ class _SettingsScaffold extends StatelessWidget {
           SwitchListTile(
             value: readReceipts,
             title: Text(l10n.readReceipts),
-            onChanged: onReadReceiptsChanged,
+            onChanged: privacyUpdating ? null : onReadReceiptsChanged,
           ),
           SwitchListTile(
             value: lastSeenVisible,
             title: Text(l10n.lastSeenVisibility),
-            onChanged: onLastSeenChanged,
+            onChanged: privacyUpdating ? null : onLastSeenChanged,
+          ),
+          SwitchListTile(
+            value: typingVisibilityEnabled,
+            title: const Text('Typing visibility'),
+            onChanged: privacyUpdating ? null : onTypingVisibilityChanged,
           ),
           const Divider(height: 0),
           ListTile(

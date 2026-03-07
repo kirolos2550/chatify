@@ -23,6 +23,7 @@ class ChatMessageView {
     this.editedAt,
     this.deletedForAllAt,
     this.isStarred = false,
+    this.isPinned = false,
     this.reactionsByUser = const <String, String>{},
   });
 
@@ -37,6 +38,7 @@ class ChatMessageView {
   final DateTime? editedAt;
   final DateTime? deletedForAllAt;
   final bool isStarred;
+  final bool isPinned;
   final Map<String, String> reactionsByUser;
 
   bool get isDeleted => deletedForAllAt != null;
@@ -98,12 +100,14 @@ class ChatThreadCubit extends Cubit<ChatThreadState> {
   DateTime? _lastMarkReadAt;
   String? _lastUnreadIncomingIdMarked;
   final Map<String, String> _decryptCacheByCiphertext = <String, String>{};
+  final List<DateTime> _recentSendAttempts = <DateTime>[];
 
   void start(String conversationId) {
     _conversationId = conversationId;
     _queuedSnapshot = null;
     _processingSnapshots = false;
     _decryptCacheByCiphertext.clear();
+    _recentSendAttempts.clear();
     _lastUnreadIncomingIdMarked = null;
     emit(state.copyWith(loading: true, clearError: true));
     _messagesSubscription?.cancel();
@@ -145,6 +149,15 @@ class ChatThreadCubit extends Cubit<ChatThreadState> {
   }) async {
     final conversationId = _conversationId;
     if (conversationId == null || content.isEmpty) {
+      return false;
+    }
+    if (!_allowSendNow()) {
+      emit(
+        state.copyWith(
+          errorMessage:
+              'Too many messages sent in a short time. Please wait a bit.',
+        ),
+      );
       return false;
     }
 
@@ -319,6 +332,39 @@ class ChatThreadCubit extends Cubit<ChatThreadState> {
     return true;
   }
 
+  Future<bool> toggleMessagePin(ChatMessageView message) async {
+    final conversationId = _conversationId;
+    if (conversationId == null) {
+      return false;
+    }
+    if (!message.isPinned) {
+      final currentlyPinned = state.messages
+          .where((item) => item.isPinned)
+          .length;
+      if (currentlyPinned >= 3) {
+        emit(
+          state.copyWith(
+            errorMessage:
+                'You can pin up to 3 messages. Unpin one to add another.',
+          ),
+        );
+        return false;
+      }
+    }
+    emit(state.copyWith(clearError: true));
+    final result = await _messageRepository.setMessagePinned(
+      conversationId: conversationId,
+      messageId: message.id,
+      userId: _currentUserId,
+      pinned: !message.isPinned,
+    );
+    if (result is FailureResult<void>) {
+      emit(state.copyWith(errorMessage: result.failure.message));
+      return false;
+    }
+    return true;
+  }
+
   Future<bool> clearConversation() async {
     final conversationId = _conversationId;
     if (conversationId == null) {
@@ -349,6 +395,7 @@ class ChatThreadCubit extends Cubit<ChatThreadState> {
         editedAt: message.editedAt?.toLocal(),
         deletedForAllAt: message.deletedForAllAt?.toLocal(),
         isStarred: message.starredByUserIds.contains(_currentUserId),
+        isPinned: message.pinnedByUserIds.contains(_currentUserId),
         reactionsByUser: message.reactionsByUser,
       );
     }
@@ -366,6 +413,7 @@ class ChatThreadCubit extends Cubit<ChatThreadState> {
       editedAt: message.editedAt?.toLocal(),
       deletedForAllAt: message.deletedForAllAt?.toLocal(),
       isStarred: message.starredByUserIds.contains(_currentUserId),
+      isPinned: message.pinnedByUserIds.contains(_currentUserId),
       reactionsByUser: message.reactionsByUser,
     );
   }
@@ -515,6 +563,18 @@ class ChatThreadCubit extends Cubit<ChatThreadState> {
   }
 
   String _peerDeviceId(String conversationId) => 'peer-$conversationId';
+
+  bool _allowSendNow() {
+    final now = DateTime.now().toUtc();
+    _recentSendAttempts.removeWhere(
+      (attempt) => now.difference(attempt) > const Duration(seconds: 15),
+    );
+    if (_recentSendAttempts.length >= 8) {
+      return false;
+    }
+    _recentSendAttempts.add(now);
+    return true;
+  }
 
   @override
   Future<void> close() async {
