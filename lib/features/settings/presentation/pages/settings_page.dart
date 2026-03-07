@@ -92,7 +92,7 @@ class _SettingsPageState extends State<SettingsPage> {
     if (!mounted) {
       return;
     }
-    context.push('/profile/$uid');
+    context.push('/profile/${Uri.encodeComponent(uid)}');
   }
 
   Future<void> _changeLanguage() async {
@@ -195,6 +195,7 @@ class _SettingsScaffold extends StatelessWidget {
       'en' => l10n.languageEnglish,
       _ => l10n.languageSystem,
     };
+    final avatarImage = _avatarImage(profileAvatarUrl);
 
     return Scaffold(
       appBar: AppBar(title: Text(l10n.settings)),
@@ -202,10 +203,8 @@ class _SettingsScaffold extends StatelessWidget {
         children: [
           ListTile(
             leading: CircleAvatar(
-              backgroundImage: profileAvatarUrl != null
-                  ? NetworkImage(profileAvatarUrl!)
-                  : null,
-              child: profileAvatarUrl == null ? const Icon(Icons.person) : null,
+              backgroundImage: avatarImage,
+              child: avatarImage == null ? const Icon(Icons.person) : null,
             ),
             title: Text(profileName),
             subtitle: Text(profileSubtitle),
@@ -254,5 +253,20 @@ class _SettingsScaffold extends StatelessWidget {
         ],
       ),
     );
+  }
+
+  ImageProvider<Object>? _avatarImage(String? value) {
+    final raw = value?.trim();
+    if (raw == null || raw.isEmpty) {
+      return null;
+    }
+    final uri = Uri.tryParse(raw);
+    if (uri == null) {
+      return null;
+    }
+    if ((uri.scheme != 'http' && uri.scheme != 'https') || !uri.hasAuthority) {
+      return null;
+    }
+    return NetworkImage(raw);
   }
 }

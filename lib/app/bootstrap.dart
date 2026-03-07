@@ -11,6 +11,7 @@ import 'package:cloud_functions/cloud_functions.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:chatify/firebase_options.dart';
 import 'package:firebase_core/firebase_core.dart';
+import 'package:firebase_crashlytics/firebase_crashlytics.dart';
 import 'package:firebase_storage/firebase_storage.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
@@ -22,22 +23,41 @@ const bool _useFirebaseEmulators = bool.fromEnvironment(
 const String _firebaseEmulatorHostOverride = String.fromEnvironment(
   'FIREBASE_EMULATOR_HOST',
 );
+const bool _enableCrashlyticsInDebug = bool.fromEnvironment(
+  'CRASHLYTICS_IN_DEBUG',
+  defaultValue: false,
+);
 
 bool _emulatorsConfigured = false;
 
 Future<void> bootstrap(AppFlavor flavor) async {
-  await runZonedGuarded(() async {
-    WidgetsFlutterBinding.ensureInitialized();
-    FlutterError.onError = (details) {
-      AppLogger.error('FlutterError', details.exception, details.stack);
-    };
+  await runZonedGuarded(
+    () async {
+      WidgetsFlutterBinding.ensureInitialized();
+      final previousFlutterErrorHandler = FlutterError.onError;
+      FlutterError.onError = (details) {
+        previousFlutterErrorHandler?.call(details);
+        AppLogger.error('FlutterError', details.exception, details.stack);
+        unawaited(_recordFlutterFatalError(details));
+      };
+      PlatformDispatcher.instance.onError = (error, stackTrace) {
+        AppLogger.error('PlatformError', error, stackTrace);
+        unawaited(_recordError(error, stackTrace, fatal: true));
+        return true;
+      };
 
-    await _initFirebase();
-    await _configureFirebaseRuntime(flavor);
-    await configureDependencies(flavor);
-    await AppLocaleController.instance.load();
-    runApp(ChatifyApp(flavor: flavor));
-  }, (error, stackTrace) => AppLogger.error('ZoneError', error, stackTrace));
+      await _initFirebase();
+      await _configureCrashlytics(flavor);
+      await _configureFirebaseRuntime(flavor);
+      await configureDependencies(flavor);
+      await AppLocaleController.instance.load();
+      runApp(ChatifyApp(flavor: flavor));
+    },
+    (error, stackTrace) {
+      AppLogger.error('ZoneError', error, stackTrace);
+      unawaited(_recordError(error, stackTrace, fatal: true));
+    },
+  );
 }
 
 Future<void> _initFirebase() async {
@@ -88,6 +108,58 @@ Future<void> _configureFirebaseRuntime(AppFlavor flavor) async {
   AppLogger.info(
     'Firebase emulators enabled on $host (auth:9099, firestore:8080, functions:5001, storage:9199)',
   );
+}
+
+Future<void> _configureCrashlytics(AppFlavor flavor) async {
+  if (Firebase.apps.isEmpty) {
+    return;
+  }
+  final enabled = kReleaseMode || _enableCrashlyticsInDebug;
+  try {
+    await FirebaseCrashlytics.instance.setCrashlyticsCollectionEnabled(enabled);
+    if (!enabled) {
+      AppLogger.info(
+        'Crashlytics disabled in debug. Enable with --dart-define=CRASHLYTICS_IN_DEBUG=true',
+      );
+      return;
+    }
+    await FirebaseCrashlytics.instance.setCustomKey(
+      'app_flavor',
+      flavor.nameValue,
+    );
+  } catch (error, stackTrace) {
+    AppLogger.error('Crashlytics setup failed', error, stackTrace);
+  }
+}
+
+Future<void> _recordFlutterFatalError(FlutterErrorDetails details) async {
+  if (Firebase.apps.isEmpty) {
+    return;
+  }
+  try {
+    await FirebaseCrashlytics.instance.recordFlutterFatalError(details);
+  } catch (error, stackTrace) {
+    AppLogger.error('Crashlytics record failed', error, stackTrace);
+  }
+}
+
+Future<void> _recordError(
+  Object error,
+  StackTrace stackTrace, {
+  required bool fatal,
+}) async {
+  if (Firebase.apps.isEmpty) {
+    return;
+  }
+  try {
+    await FirebaseCrashlytics.instance.recordError(
+      error,
+      stackTrace,
+      fatal: fatal,
+    );
+  } catch (innerError, innerStackTrace) {
+    AppLogger.error('Crashlytics record failed', innerError, innerStackTrace);
+  }
 }
 
 String _resolveEmulatorHost() {

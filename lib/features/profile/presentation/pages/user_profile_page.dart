@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:chatify/app/di/injection.dart';
 import 'package:chatify/core/common/result.dart';
 import 'package:chatify/core/domain/entities/app_user.dart';
@@ -57,13 +59,25 @@ class _UserProfilePageState extends State<UserProfilePage> {
       final userDoc = await firestore
           .collection('users')
           .doc(widget.userId)
-          .get();
+          .get()
+          .timeout(const Duration(seconds: 15));
+      if (!userDoc.exists) {
+        if (!mounted) {
+          return;
+        }
+        setState(() {
+          _loading = false;
+          _errorMessage = 'User not found';
+        });
+        return;
+      }
       final profile = _mapUser(userDoc);
 
       final conversationsSnapshot = await firestore
           .collection('conversations')
           .where('memberIds', arrayContains: widget.userId)
-          .get();
+          .get()
+          .timeout(const Duration(seconds: 15));
 
       final groups =
           conversationsSnapshot.docs
@@ -95,25 +109,51 @@ class _UserProfilePageState extends State<UserProfilePage> {
       }
       setState(() {
         _loading = false;
-        _errorMessage = error.toString();
+        _errorMessage = error is TimeoutException
+            ? 'Profile loading timed out. Check your internet and try again.'
+            : error.toString();
       });
     }
   }
 
   AppUser _mapUser(DocumentSnapshot<Map<String, dynamic>> doc) {
     final data = doc.data() ?? <String, dynamic>{};
+    final displayName = _readString(data['displayName']) ?? 'User';
+    final normalizedDisplayName = displayName.isEmpty ? 'User' : displayName;
+    final avatarUrl = _normalizeHttpUrl(_readString(data['avatarUrl']));
     return AppUser(
       id: doc.id,
-      phone: (data['phone'] as String? ?? '').trim(),
-      displayName: (data['displayName'] as String? ?? 'User').trim().isEmpty
-          ? 'User'
-          : (data['displayName'] as String).trim(),
-      avatarUrl: (data['avatarUrl'] as String?)?.trim().isEmpty ?? true
-          ? null
-          : (data['avatarUrl'] as String).trim(),
-      about: (data['about'] as String?)?.trim(),
+      phone: _readString(data['phone']) ?? '',
+      displayName: normalizedDisplayName,
+      avatarUrl: avatarUrl,
+      about: _readString(data['about']),
       createdAt: _toDateTime(data['createdAt']) ?? DateTime.now().toUtc(),
     );
+  }
+
+  String? _readString(Object? value) {
+    if (value is! String) {
+      return null;
+    }
+    final normalized = value.trim();
+    if (normalized.isEmpty) {
+      return null;
+    }
+    return normalized;
+  }
+
+  String? _normalizeHttpUrl(String? value) {
+    if (value == null) {
+      return null;
+    }
+    final uri = Uri.tryParse(value);
+    if (uri == null) {
+      return null;
+    }
+    if ((uri.scheme != 'http' && uri.scheme != 'https') || !uri.hasAuthority) {
+      return null;
+    }
+    return value;
   }
 
   _GroupEntry? _mapGroup(
@@ -404,6 +444,7 @@ class _ProfileHeader extends StatelessWidget {
     final avatarLetter = profile.displayName.isEmpty
         ? '?'
         : profile.displayName[0].toUpperCase();
+    final avatarImage = _avatarImage(profile.avatarUrl);
     return Card(
       child: Padding(
         padding: const EdgeInsets.all(16),
@@ -411,10 +452,8 @@ class _ProfileHeader extends StatelessWidget {
           children: [
             CircleAvatar(
               radius: 34,
-              backgroundImage: profile.avatarUrl != null
-                  ? NetworkImage(profile.avatarUrl!)
-                  : null,
-              child: profile.avatarUrl == null ? Text(avatarLetter) : null,
+              backgroundImage: avatarImage,
+              child: avatarImage == null ? Text(avatarLetter) : null,
             ),
             const SizedBox(width: 14),
             Expanded(
@@ -447,6 +486,21 @@ class _ProfileHeader extends StatelessWidget {
         ),
       ),
     );
+  }
+
+  ImageProvider<Object>? _avatarImage(String? value) {
+    final raw = value?.trim();
+    if (raw == null || raw.isEmpty) {
+      return null;
+    }
+    final uri = Uri.tryParse(raw);
+    if (uri == null) {
+      return null;
+    }
+    if ((uri.scheme != 'http' && uri.scheme != 'https') || !uri.hasAuthority) {
+      return null;
+    }
+    return NetworkImage(raw);
   }
 }
 

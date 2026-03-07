@@ -68,8 +68,9 @@ abstract final class AppRouter {
       ),
       GoRoute(
         path: '/profile/:uid',
-        builder: (context, state) =>
-            UserProfilePage(userId: state.pathParameters['uid'] ?? ''),
+        builder: (context, state) => UserProfilePage(
+          userId: Uri.decodeComponent(state.pathParameters['uid'] ?? ''),
+        ),
       ),
       GoRoute(
         path: '/linked-devices',

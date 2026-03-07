@@ -1,4 +1,4 @@
-﻿name: chatify
+name: chatify
 description: "Chatify production-grade messaging app foundation."
 publish_to: 'none'
 version: 1.0.0+1
@@ -44,6 +44,7 @@ dependencies:
   record: ^6.1.2
   just_audio: ^0.10.5
   json_annotation: ^4.9.0
+  firebase_crashlytics: ^5.0.8
 
 dev_dependencies:
   flutter_test:

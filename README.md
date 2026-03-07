@@ -3,7 +3,7 @@
 Production-oriented Flutter messaging foundation aligned with:
 - Clean Architecture (Presentation / Domain / Data)
 - Feature-first module boundaries
-- Firebase stack (Auth, Firestore, Storage, Functions, FCM)
+- Firebase stack (Auth, Firestore, Storage, Functions, FCM, Crashlytics)
 - Drift offline-first storage
 - Bloc/Cubit state management
 - DI using get_it + injectable
@@ -130,6 +130,26 @@ Verify token must match `WHATSAPP_VERIFY_TOKEN`.
 6. Enter phone numbers in E.164 format (example: `+2010XXXXXXXX`).
 7. After successful OTP verification, the app now auto-creates/updates `users/{uid}` in Firestore.
 
+## Crashlytics
+
+- Integrated and wired in app bootstrap for:
+  - Flutter framework uncaught errors
+  - Platform dispatcher uncaught errors
+  - `runZonedGuarded` uncaught errors
+- Crashlytics collection is enabled by default in release builds.
+- In debug builds, collection is disabled by default. Enable it with:
+  - `flutter run -t lib/main.dart --dart-define=CRASHLYTICS_IN_DEBUG=true`
+- Android Gradle Crashlytics plugin is enabled in `android/app/build.gradle.kts`.
+
+### Flavor note
+
+- Each Android flavor package must exist in Firebase:
+  - `dev` uses `com.chatify.app.dev`
+  - `stage` uses `com.chatify.app.stage`
+  - `prod` uses `com.chatify.app`
+- If a flavor is missing from Firebase config, you'll get:
+  - `No matching client found for package name ...`
+
 ## Firebase Project Safety
 
 - This repo default alias now points to `chatify-3d844`.
@@ -175,6 +195,9 @@ Verify token must match `WHATSAPP_VERIFY_TOKEN`.
   - Groups that user is in
   - Shared groups between current user and viewed user
 - Settings top profile tile now opens your editable profile screen.
+- Profile opening/edit flow hardened to avoid crashes on invalid/missing
+  Firestore values (safe string parsing, avatar URL validation, timeout/error
+  handling).
 
 ## WhatsApp Comparison (Current Snapshot)
 
