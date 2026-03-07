@@ -7,6 +7,7 @@ class Conversation extends Equatable {
     required this.type,
     required this.createdAt,
     this.isArchived = false,
+    this.isPinned = false,
     this.title,
     this.avatarUrl,
     this.lastMessageId,
@@ -21,6 +22,7 @@ class Conversation extends Equatable {
   final DateTime? updatedAt;
   final String? lastMessageId;
   final bool isArchived;
+  final bool isPinned;
 
   @override
   List<Object?> get props => [
@@ -32,5 +34,6 @@ class Conversation extends Equatable {
     updatedAt,
     lastMessageId,
     isArchived,
+    isPinned,
   ];
 }

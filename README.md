@@ -166,7 +166,9 @@ Verify token must match `WHATSAPP_VERIFY_TOKEN`.
   - Seek from any time using slider
   - Elapsed/total duration display
 - Archive / Unarchive conversation from chat list long-press menu.
+- Pin / Unpin conversation from chat list long-press menu.
 - Archived view toggle in chats screen.
+- Message reactions (emoji) and starred messages.
 - User profile page:
   - Public name, phone and avatar display
   - Self profile editing (display name, about, avatar URL)
@@ -183,12 +185,14 @@ Verify token must match `WHATSAPP_VERIFY_TOKEN`.
 - Delivery/read indicators (basic).
 - Localized UI (Arabic/English).
 - Archive chats (per user).
+- Pinned chats (per user).
+- Message reactions and starred messages.
 
 ### Missing or partial vs WhatsApp
 - Full Signal-protocol E2EE with audited key management.
 - Multi-device key sync and safety-number verification UX.
 - Reliable push notification delivery pipeline at scale.
-- Message reactions, pinned chats/messages, starred messages.
+- Pinned messages.
 - Chat backup/restore parity with production-grade encryption.
 - Robust anti-spam/abuse controls and account recovery flows.
 - Presence/typing/last-seen privacy controls parity.

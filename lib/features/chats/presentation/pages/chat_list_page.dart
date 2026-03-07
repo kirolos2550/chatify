@@ -125,6 +125,7 @@ class _ChatListPageState extends State<ChatListPage> {
       conversationId: conversation.id,
       trailing: trailing,
       isArchived: conversation.isArchived,
+      isPinned: conversation.isPinned,
     );
   }
 
@@ -363,6 +364,15 @@ class _ChatListPageState extends State<ChatListPage> {
           children: [
             ListTile(
               leading: Icon(
+                item.isPinned ? Icons.push_pin_outlined : Icons.push_pin,
+              ),
+              title: Text(item.isPinned ? 'Unpin chat' : 'Pin chat'),
+              subtitle: Text(item.title),
+              onTap: () =>
+                  Navigator.of(context).pop(item.isPinned ? 'unpin' : 'pin'),
+            ),
+            ListTile(
+              leading: Icon(
                 item.isArchived
                     ? Icons.unarchive_outlined
                     : Icons.archive_outlined,
@@ -391,6 +401,23 @@ class _ChatListPageState extends State<ChatListPage> {
     final repository = _resolveConversationRepository();
     if (repository == null) {
       _showSnack('Conversation service is unavailable right now');
+      return;
+    }
+
+    if (action == 'pin' || action == 'unpin') {
+      final pinned = action == 'pin';
+      final result = await repository.setConversationPinned(
+        conversationId: item.conversationId,
+        pinned: pinned,
+      );
+      if (!mounted) {
+        return;
+      }
+      if (result is Success<void>) {
+        _showSnack(pinned ? 'Chat pinned' : 'Chat unpinned');
+        return;
+      }
+      _showSnack(result.error?.message ?? 'Failed to update pin state');
       return;
     }
 
@@ -547,9 +574,7 @@ class _ChatsScaffold extends StatelessWidget {
                               leading: CircleAvatar(child: Text(item.title[0])),
                               title: Text(item.title),
                               subtitle: Text(item.subtitle),
-                              trailing: item.trailing.isEmpty
-                                  ? null
-                                  : Text(item.trailing),
+                              trailing: _buildTrailing(item),
                               onTap: () =>
                                   onOpenConversation(item.conversationId),
                               onLongPress: () => onConversationLongPress(item),
@@ -566,6 +591,21 @@ class _ChatsScaffold extends StatelessWidget {
       ),
     );
   }
+
+  Widget? _buildTrailing(_ChatListItem item) {
+    final hasTime = item.trailing.isNotEmpty;
+    if (!item.isPinned && !hasTime) {
+      return null;
+    }
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        if (item.isPinned) const Icon(Icons.push_pin, size: 16),
+        if (item.isPinned && hasTime) const SizedBox(width: 4),
+        if (hasTime) Text(item.trailing),
+      ],
+    );
+  }
 }
 
 class _ChatListItem {
@@ -575,6 +615,7 @@ class _ChatListItem {
     required this.conversationId,
     required this.trailing,
     this.isArchived = false,
+    this.isPinned = false,
   });
 
   final String title;
@@ -582,6 +623,7 @@ class _ChatListItem {
   final String conversationId;
   final String trailing;
   final bool isArchived;
+  final bool isPinned;
 }
 
 enum _ConversationDeleteScope { forMe, forEveryone }

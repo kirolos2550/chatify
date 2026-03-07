@@ -21,4 +21,9 @@ abstract interface class ConversationRepository {
     required String conversationId,
     required bool archived,
   });
+
+  Future<Result<void>> setConversationPinned({
+    required String conversationId,
+    required bool pinned,
+  });
 }

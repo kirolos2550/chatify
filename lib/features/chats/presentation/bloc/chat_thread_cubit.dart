@@ -22,6 +22,8 @@ class ChatMessageView {
     this.replyToMessageId,
     this.editedAt,
     this.deletedForAllAt,
+    this.isStarred = false,
+    this.reactionsByUser = const <String, String>{},
   });
 
   final String id;
@@ -34,6 +36,8 @@ class ChatMessageView {
   final String? replyToMessageId;
   final DateTime? editedAt;
   final DateTime? deletedForAllAt;
+  final bool isStarred;
+  final Map<String, String> reactionsByUser;
 
   bool get isDeleted => deletedForAllAt != null;
 }
@@ -125,10 +129,7 @@ class ChatThreadCubit extends Cubit<ChatThreadState> {
   }
 
   Future<bool> sendText(String rawText) async {
-    return _sendTypedMessage(
-      content: rawText.trim(),
-      type: MessageType.text,
-    );
+    return _sendTypedMessage(content: rawText.trim(), type: MessageType.text);
   }
 
   Future<bool> sendTypedMessage({
@@ -277,6 +278,47 @@ class ChatThreadCubit extends Cubit<ChatThreadState> {
     return true;
   }
 
+  Future<bool> setMessageReaction({
+    required ChatMessageView message,
+    String? emoji,
+  }) async {
+    final conversationId = _conversationId;
+    if (conversationId == null) {
+      return false;
+    }
+    emit(state.copyWith(clearError: true));
+    final result = await _messageRepository.setMessageReaction(
+      conversationId: conversationId,
+      messageId: message.id,
+      userId: _currentUserId,
+      emoji: emoji,
+    );
+    if (result is FailureResult<void>) {
+      emit(state.copyWith(errorMessage: result.failure.message));
+      return false;
+    }
+    return true;
+  }
+
+  Future<bool> toggleMessageStar(ChatMessageView message) async {
+    final conversationId = _conversationId;
+    if (conversationId == null) {
+      return false;
+    }
+    emit(state.copyWith(clearError: true));
+    final result = await _messageRepository.setMessageStarred(
+      conversationId: conversationId,
+      messageId: message.id,
+      userId: _currentUserId,
+      starred: !message.isStarred,
+    );
+    if (result is FailureResult<void>) {
+      emit(state.copyWith(errorMessage: result.failure.message));
+      return false;
+    }
+    return true;
+  }
+
   Future<bool> clearConversation() async {
     final conversationId = _conversationId;
     if (conversationId == null) {
@@ -306,6 +348,8 @@ class ChatThreadCubit extends Cubit<ChatThreadState> {
         replyToMessageId: message.replyToMessageId,
         editedAt: message.editedAt?.toLocal(),
         deletedForAllAt: message.deletedForAllAt?.toLocal(),
+        isStarred: message.starredByUserIds.contains(_currentUserId),
+        reactionsByUser: message.reactionsByUser,
       );
     }
 
@@ -321,6 +365,8 @@ class ChatThreadCubit extends Cubit<ChatThreadState> {
       replyToMessageId: message.replyToMessageId,
       editedAt: message.editedAt?.toLocal(),
       deletedForAllAt: message.deletedForAllAt?.toLocal(),
+      isStarred: message.starredByUserIds.contains(_currentUserId),
+      reactionsByUser: message.reactionsByUser,
     );
   }
 

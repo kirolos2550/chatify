@@ -62,6 +62,8 @@ class MessageRepositoryImpl implements MessageRepository {
             'deletedForUserIds': const <String>[],
             'deliveredToUserIds': const <String>[],
             'readByUserIds': const <String>[],
+            'starredByUserIds': const <String>[],
+            'reactionsByUser': const <String, String>{},
           });
 
       await _db
@@ -237,6 +239,56 @@ class MessageRepositoryImpl implements MessageRepository {
     }
   }
 
+  @override
+  Future<Result<void>> setMessageReaction({
+    required String conversationId,
+    required String messageId,
+    required String userId,
+    String? emoji,
+  }) async {
+    final normalizedEmoji = emoji?.trim();
+    try {
+      final ref = _firestore
+          .collection(FirebasePaths.conversations)
+          .doc(conversationId)
+          .collection(FirebasePaths.messages)
+          .doc(messageId);
+      final key = 'reactionsByUser.$userId';
+      await ref.set({
+        key: (normalizedEmoji == null || normalizedEmoji.isEmpty)
+            ? FieldValue.delete()
+            : normalizedEmoji,
+      }, SetOptions(merge: true));
+      return const Success(null);
+    } catch (e) {
+      return FailureResult(Failure(e.toString()));
+    }
+  }
+
+  @override
+  Future<Result<void>> setMessageStarred({
+    required String conversationId,
+    required String messageId,
+    required String userId,
+    required bool starred,
+  }) async {
+    try {
+      await _firestore
+          .collection(FirebasePaths.conversations)
+          .doc(conversationId)
+          .collection(FirebasePaths.messages)
+          .doc(messageId)
+          .set({
+            'starredByUserIds': starred
+                ? FieldValue.arrayUnion([userId])
+                : FieldValue.arrayRemove([userId]),
+          }, SetOptions(merge: true));
+      return const Success(null);
+    } catch (e) {
+      return FailureResult(Failure(e.toString()));
+    }
+  }
+
   Message _fromDoc(
     String conversationId,
     QueryDocumentSnapshot<Map<String, dynamic>> doc,
@@ -263,6 +315,8 @@ class MessageRepositoryImpl implements MessageRepository {
       deletedForUserIds: _asStringList(data['deletedForUserIds']),
       deliveredToUserIds: _asStringList(data['deliveredToUserIds']),
       readByUserIds: _asStringList(data['readByUserIds']),
+      starredByUserIds: _asStringList(data['starredByUserIds']),
+      reactionsByUser: _asStringMap(data['reactionsByUser']),
     );
   }
 
@@ -284,5 +338,18 @@ class MessageRepositoryImpl implements MessageRepository {
       return value.toDate().toUtc();
     }
     return null;
+  }
+
+  Map<String, String> _asStringMap(Object? value) {
+    if (value is! Map) {
+      return const <String, String>{};
+    }
+    final output = <String, String>{};
+    value.forEach((key, rawValue) {
+      if (key is String && rawValue is String && rawValue.trim().isNotEmpty) {
+        output[key] = rawValue;
+      }
+    });
+    return Map<String, String>.unmodifiable(output);
   }
 }

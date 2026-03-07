@@ -33,4 +33,18 @@ abstract interface class MessageRepository {
   Future<Result<void>> clearConversationMessages({
     required String conversationId,
   });
+
+  Future<Result<void>> setMessageReaction({
+    required String conversationId,
+    required String messageId,
+    required String userId,
+    String? emoji,
+  });
+
+  Future<Result<void>> setMessageStarred({
+    required String conversationId,
+    required String messageId,
+    required String userId,
+    required bool starred,
+  });
 }

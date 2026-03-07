@@ -85,6 +85,7 @@ class ConversationRepositoryImpl implements ConversationRepository {
         'title': null,
         'memberIds': [uid, resolvedPeerUserId],
         'archivedByUserIds': const <String>[],
+        'pinnedByUserIds': const <String>[],
         'directKey': directKey,
         'createdAt': now,
         'updatedAt': now,
@@ -115,6 +116,7 @@ class ConversationRepositoryImpl implements ConversationRepository {
         'ownerId': uid,
         'memberIds': allMembers,
         'archivedByUserIds': const <String>[],
+        'pinnedByUserIds': const <String>[],
         'createdAt': now,
         'updatedAt': now,
       });
@@ -245,6 +247,31 @@ class ConversationRepositoryImpl implements ConversationRepository {
     }
   }
 
+  @override
+  Future<Result<void>> setConversationPinned({
+    required String conversationId,
+    required bool pinned,
+  }) async {
+    final uid = _auth.currentUser?.uid;
+    if (uid == null) {
+      return const FailureResult(Failure('No active user'));
+    }
+
+    try {
+      await _firestore
+          .collection(FirebasePaths.conversations)
+          .doc(conversationId)
+          .set({
+            'pinnedByUserIds': pinned
+                ? FieldValue.arrayUnion([uid])
+                : FieldValue.arrayRemove([uid]),
+          }, SetOptions(merge: true));
+      return const Success(null);
+    } catch (e) {
+      return FailureResult(Failure(e.toString()));
+    }
+  }
+
   Conversation _fromDoc(
     DocumentSnapshot<Map<String, dynamic>> doc, {
     required String currentUserId,
@@ -254,6 +281,7 @@ class ConversationRepositoryImpl implements ConversationRepository {
         ? ConversationType.group
         : ConversationType.direct;
     final archivedByUsers = _asStringSet(data['archivedByUserIds']);
+    final pinnedByUsers = _asStringSet(data['pinnedByUserIds']);
     return Conversation(
       id: doc.id,
       type: type,
@@ -263,6 +291,7 @@ class ConversationRepositoryImpl implements ConversationRepository {
       updatedAt: _fromMillis(data['updatedAt']),
       lastMessageId: data['lastMessageId'] as String?,
       isArchived: archivedByUsers.contains(currentUserId),
+      isPinned: pinnedByUsers.contains(currentUserId),
     );
   }
 
@@ -277,6 +306,9 @@ class ConversationRepositoryImpl implements ConversationRepository {
   }
 
   int _compareByActivityDesc(Conversation left, Conversation right) {
+    if (left.isPinned != right.isPinned) {
+      return left.isPinned ? -1 : 1;
+    }
     final leftActivity = left.updatedAt ?? left.createdAt;
     final rightActivity = right.updatedAt ?? right.createdAt;
     return rightActivity.compareTo(leftActivity);

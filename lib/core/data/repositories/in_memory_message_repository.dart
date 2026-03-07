@@ -66,6 +66,8 @@ class InMemoryMessageRepository implements MessageRepository {
         deviceId: current.deviceId,
         replyToMessageId: current.replyToMessageId,
         e2eeVersion: current.e2eeVersion,
+        starredByUserIds: current.starredByUserIds,
+        reactionsByUser: current.reactionsByUser,
       );
       _emit(conversationId);
       return const Success(null);
@@ -103,6 +105,8 @@ class InMemoryMessageRepository implements MessageRepository {
         deviceId: current.deviceId,
         replyToMessageId: current.replyToMessageId,
         e2eeVersion: current.e2eeVersion,
+        starredByUserIds: current.starredByUserIds,
+        reactionsByUser: current.reactionsByUser,
       );
       _emit(conversationId);
       return const Success(null);
@@ -163,6 +167,8 @@ class InMemoryMessageRepository implements MessageRepository {
           deviceId: current.deviceId,
           replyToMessageId: current.replyToMessageId,
           e2eeVersion: current.e2eeVersion,
+          starredByUserIds: current.starredByUserIds,
+          reactionsByUser: current.reactionsByUser,
         );
       }
       if (changed) {
@@ -180,6 +186,101 @@ class InMemoryMessageRepository implements MessageRepository {
   }) async {
     try {
       _messagesByConversation[conversationId] = <Message>[];
+      _emit(conversationId);
+      return const Success(null);
+    } catch (error) {
+      return FailureResult(Failure(error.toString()));
+    }
+  }
+
+  @override
+  Future<Result<void>> setMessageReaction({
+    required String conversationId,
+    required String messageId,
+    required String userId,
+    String? emoji,
+  }) async {
+    try {
+      final list = _messagesFor(conversationId);
+      final index = list.indexWhere((item) => item.id == messageId);
+      if (index < 0) {
+        return const FailureResult(Failure('Message not found'));
+      }
+      final current = list[index];
+      final reactions = Map<String, String>.from(current.reactionsByUser);
+      final normalizedEmoji = emoji?.trim();
+      if (normalizedEmoji == null || normalizedEmoji.isEmpty) {
+        reactions.remove(userId);
+      } else {
+        reactions[userId] = normalizedEmoji;
+      }
+      list[index] = Message(
+        id: current.id,
+        conversationId: current.conversationId,
+        senderId: current.senderId,
+        type: current.type,
+        ciphertext: current.ciphertext,
+        clientTimestamp: current.clientTimestamp,
+        serverSeq: current.serverSeq,
+        editedAt: current.editedAt,
+        deletedForAllAt: current.deletedForAllAt,
+        deletedForUserIds: current.deletedForUserIds,
+        deliveredToUserIds: current.deliveredToUserIds,
+        readByUserIds: current.readByUserIds,
+        localStatus: current.localStatus,
+        deviceId: current.deviceId,
+        replyToMessageId: current.replyToMessageId,
+        e2eeVersion: current.e2eeVersion,
+        starredByUserIds: current.starredByUserIds,
+        reactionsByUser: reactions,
+      );
+      _emit(conversationId);
+      return const Success(null);
+    } catch (error) {
+      return FailureResult(Failure(error.toString()));
+    }
+  }
+
+  @override
+  Future<Result<void>> setMessageStarred({
+    required String conversationId,
+    required String messageId,
+    required String userId,
+    required bool starred,
+  }) async {
+    try {
+      final list = _messagesFor(conversationId);
+      final index = list.indexWhere((item) => item.id == messageId);
+      if (index < 0) {
+        return const FailureResult(Failure('Message not found'));
+      }
+      final current = list[index];
+      final starredBy = current.starredByUserIds.toSet();
+      if (starred) {
+        starredBy.add(userId);
+      } else {
+        starredBy.remove(userId);
+      }
+      list[index] = Message(
+        id: current.id,
+        conversationId: current.conversationId,
+        senderId: current.senderId,
+        type: current.type,
+        ciphertext: current.ciphertext,
+        clientTimestamp: current.clientTimestamp,
+        serverSeq: current.serverSeq,
+        editedAt: current.editedAt,
+        deletedForAllAt: current.deletedForAllAt,
+        deletedForUserIds: current.deletedForUserIds,
+        deliveredToUserIds: current.deliveredToUserIds,
+        readByUserIds: current.readByUserIds,
+        localStatus: current.localStatus,
+        deviceId: current.deviceId,
+        replyToMessageId: current.replyToMessageId,
+        e2eeVersion: current.e2eeVersion,
+        starredByUserIds: starredBy.toList(growable: false),
+        reactionsByUser: current.reactionsByUser,
+      );
       _emit(conversationId);
       return const Success(null);
     } catch (error) {

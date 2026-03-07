@@ -247,6 +247,11 @@ class _ChatPageState extends State<ChatPage> {
                                       ),
                                     ),
                                   _buildMessageBody(message),
+                                  if (message.reactionsByUser.isNotEmpty)
+                                    Padding(
+                                      padding: const EdgeInsets.only(top: 6),
+                                      child: _buildMessageReactions(message),
+                                    ),
                                   const SizedBox(height: 6),
                                   _buildMessageMeta(context, message),
                                 ],
@@ -1398,6 +1403,24 @@ class _ChatPageState extends State<ChatPage> {
                   onTap: () =>
                       Navigator.of(context).pop(_MessageAction.forward),
                 ),
+              if (!message.isDeleted)
+                ListTile(
+                  leading: const Icon(Icons.emoji_emotions_outlined),
+                  title: const Text('React'),
+                  onTap: () => Navigator.of(context).pop(_MessageAction.react),
+                ),
+              if (!message.isDeleted)
+                ListTile(
+                  leading: Icon(
+                    message.isStarred ? Icons.star : Icons.star_outline,
+                  ),
+                  title: Text(
+                    message.isStarred
+                        ? 'Remove from starred'
+                        : 'Add to starred',
+                  ),
+                  onTap: () => Navigator.of(context).pop(_MessageAction.star),
+                ),
               ListTile(
                 leading: const Icon(Icons.info_outline),
                 title: const Text('Info'),
@@ -1450,6 +1473,63 @@ class _ChatPageState extends State<ChatPage> {
       case _MessageAction.forward:
         await _forwardMessage(message);
         break;
+      case _MessageAction.react:
+        await _reactToMessage(message);
+        break;
+      case _MessageAction.star:
+        await _toggleStarMessage(message);
+        break;
+    }
+  }
+
+  Future<void> _reactToMessage(ChatMessageView message) async {
+    final selected = await showModalBottomSheet<String?>(
+      context: context,
+      builder: (context) => SafeArea(
+        child: Wrap(
+          children: [
+            ListTile(
+              leading: const Icon(Icons.remove_circle_outline),
+              title: const Text('Remove my reaction'),
+              onTap: () => Navigator.of(context).pop(''),
+            ),
+            _buildReactionOption(context, '👍'),
+            _buildReactionOption(context, '❤️'),
+            _buildReactionOption(context, '😂'),
+            _buildReactionOption(context, '😮'),
+            _buildReactionOption(context, '😢'),
+            _buildReactionOption(context, '🙏'),
+          ],
+        ),
+      ),
+    );
+    if (!mounted || selected == null) {
+      return;
+    }
+    final success = await _chatThreadCubit.setMessageReaction(
+      message: message,
+      emoji: selected.isEmpty ? null : selected,
+    );
+    if (success && mounted) {
+      _showSnack(selected.isEmpty ? 'Reaction removed' : 'Reaction updated');
+    }
+  }
+
+  ListTile _buildReactionOption(BuildContext context, String emoji) {
+    return ListTile(
+      title: Text(emoji, style: const TextStyle(fontSize: 24)),
+      onTap: () => Navigator.of(context).pop(emoji),
+    );
+  }
+
+  Future<void> _toggleStarMessage(ChatMessageView message) async {
+    final success = await _chatThreadCubit.toggleMessageStar(message);
+    if (success && mounted) {
+      _showSnack(
+        message.isStarred
+            ? 'Removed from starred messages'
+            : 'Added to starred messages',
+      );
     }
   }
 
@@ -1587,7 +1667,9 @@ class _ChatPageState extends State<ChatPage> {
           'Sent at: $sentAt\n'
           'Edited at: $editedAt\n'
           'Deleted at: $deletedAt\n'
-          'Reply to: ${message.replyToMessageId ?? '-'}',
+          'Reply to: ${message.replyToMessageId ?? '-'}\n'
+          'Starred: ${message.isStarred}\n'
+          'Reactions: ${message.reactionsByUser.values.join(', ')}',
         ),
         actions: [
           TextButton(
@@ -1697,6 +1779,27 @@ class _ChatPageState extends State<ChatPage> {
     }
   }
 
+  Widget _buildMessageReactions(ChatMessageView message) {
+    final counts = <String, int>{};
+    for (final emoji in message.reactionsByUser.values) {
+      counts.update(emoji, (value) => value + 1, ifAbsent: () => 1);
+    }
+    final sorted = counts.entries.toList()
+      ..sort((left, right) => right.value.compareTo(left.value));
+    return Wrap(
+      spacing: 6,
+      runSpacing: 4,
+      children: sorted
+          .map(
+            (entry) => Chip(
+              materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+              label: Text('${entry.key} ${entry.value}'),
+            ),
+          )
+          .toList(growable: false),
+    );
+  }
+
   Widget _buildVoiceNoteBody(
     ChatMessageView message,
     Map<String, Object?>? payload,
@@ -1803,7 +1906,8 @@ class _ChatPageState extends State<ChatPage> {
     final kind = message.type == MessageType.text
         ? ''
         : ' - ${message.type.name}';
-    return '$h:$m$kind$edited';
+    final starred = message.isStarred ? ' - starred' : '';
+    return '$h:$m$kind$edited$starred';
   }
 
   Widget _buildMessageMeta(BuildContext context, ChatMessageView message) {
@@ -1965,7 +2069,7 @@ class _ChatPageState extends State<ChatPage> {
   }
 }
 
-enum _MessageAction { reply, copy, info, edit, delete, forward }
+enum _MessageAction { reply, copy, info, edit, delete, forward, react, star }
 
 enum _DeleteScope { forMe, forEveryone }
 
