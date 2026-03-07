@@ -1,0 +1,9 @@
+{
+  "projects": {
+    "default": "chatify-3d844",
+    "local": "chatify-3d844",
+    "legacy-dev": "chatify-dev",
+    "legacy-stage": "chatify-stage",
+    "legacy-prod": "chatify-prod"
+  }
+}

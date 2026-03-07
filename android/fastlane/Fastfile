@@ -1,0 +1,16 @@
+default_platform(:android)
+
+platform :android do
+  desc "Build beta Android artifact"
+  lane :beta_android do
+    sh("flutter pub get")
+    sh("flutter build appbundle --release")
+  end
+
+  desc "Release Android artifact"
+  lane :release_android do
+    sh("flutter pub get")
+    sh("flutter build appbundle --release")
+  end
+end
+

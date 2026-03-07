@@ -1,0 +1,54 @@
+{
+  "$id": "https://chatify.example/schemas/SendMessageRequest.json",
+  "type": "object",
+  "required": [
+    "conversationId",
+    "clientMessageId",
+    "ciphertext",
+    "contentType",
+    "clientTimestamp",
+    "deviceId",
+    "e2eeVersion"
+  ],
+  "properties": {
+    "conversationId": {
+      "type": "string"
+    },
+    "clientMessageId": {
+      "type": "string"
+    },
+    "contentType": {
+      "type": "string",
+      "enum": [
+        "text",
+        "image",
+        "video",
+        "file",
+        "voice",
+        "video_note"
+      ]
+    },
+    "ciphertext": {
+      "type": "string",
+      "description": "Base64 encrypted payload"
+    },
+    "clientTimestamp": {
+      "type": "integer"
+    },
+    "replyToMessageId": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "deviceId": {
+      "type": "string"
+    },
+    "e2eeVersion": {
+      "type": "string",
+      "const": "signal-v1"
+    }
+  },
+  "additionalProperties": false
+}
+

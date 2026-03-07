@@ -1,0 +1,21 @@
+{
+  "@@locale": "en",
+  "appName": "Chatify",
+  "signIn": "Sign in",
+  "continueWithOtp": "Continue with OTP",
+  "chats": "Chats",
+  "status": "Status",
+  "calls": "Calls",
+  "settings": "Settings",
+  "language": "Language",
+  "languageSystem": "System default",
+  "languageArabic": "Arabic",
+  "languageEnglish": "English",
+  "profileName": "Product Owner",
+  "profileSubtitle": "Building Chatify",
+  "readReceipts": "Read receipts",
+  "lastSeenVisibility": "Last seen visibility",
+  "linkedDevices": "Linked devices",
+  "encryptedBackup": "Encrypted backup",
+  "signOut": "Sign out"
+}

@@ -1,0 +1,47 @@
+openapi: 3.1.0
+info:
+  title: Chatify API
+  version: 1.0.0
+servers:
+  - url: https://us-central1-chatify-prod.cloudfunctions.net
+paths:
+  /issuePreKeyBundle:
+    post:
+      summary: Publish a pre-key bundle for current device
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [deviceId, preKey, signedPreKey]
+              properties:
+                deviceId: { type: string }
+                preKey: { type: string }
+                signedPreKey: { type: string }
+      responses:
+        "200":
+          description: OK
+  /linkDeviceStart:
+    post:
+      summary: Generate device-link token
+      responses:
+        "200":
+          description: OK
+  /linkDeviceConfirm:
+    post:
+      summary: Confirm linked device
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [token, publicIdentityKey]
+              properties:
+                token: { type: string }
+                publicIdentityKey: { type: string }
+      responses:
+        "200":
+          description: OK
+

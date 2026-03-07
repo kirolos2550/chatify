@@ -1,0 +1,21 @@
+{
+  "@@locale": "ar",
+  "appName": "شاتيفاي",
+  "signIn": "تسجيل الدخول",
+  "continueWithOtp": "المتابعة عبر رمز OTP",
+  "chats": "الدردشات",
+  "status": "الحالة",
+  "calls": "المكالمات",
+  "settings": "الإعدادات",
+  "language": "اللغة",
+  "languageSystem": "لغة النظام",
+  "languageArabic": "العربية",
+  "languageEnglish": "الإنجليزية",
+  "profileName": "مالك المنتج",
+  "profileSubtitle": "يبني تطبيق Chatify",
+  "readReceipts": "إيصالات القراءة",
+  "lastSeenVisibility": "إظهار آخر ظهور",
+  "linkedDevices": "الأجهزة المرتبطة",
+  "encryptedBackup": "نسخة احتياطية مشفرة",
+  "signOut": "تسجيل الخروج"
+}

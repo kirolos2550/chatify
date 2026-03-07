@@ -1,0 +1,32 @@
+name: Release Build
+
+on:
+  push:
+    tags:
+      - "v*"
+
+jobs:
+  android-release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+      - name: Pub get
+        run: flutter pub get
+      - name: Build Android AAB
+        run: flutter build appbundle --release
+
+  ios-release:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+      - name: Pub get
+        run: flutter pub get
+      - name: Build iOS IPA
+        run: flutter build ipa --release --no-codesign
+
