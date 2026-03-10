@@ -111,6 +111,17 @@ Verify token must match `WHATSAPP_VERIFY_TOKEN`.
    - `flutter run -t lib/main.dart`
 6. For quick end-to-end smoke, use **Continue in demo mode** from the auth screen.
 
+## Android Release Build (APK)
+
+1. Build production flavor release APK:
+   - `flutter build apk --release`
+2. Output path:
+   - `build/app/outputs/flutter-apk/app-prod-release.apk`
+3. Install on a real Android phone (USB debugging enabled):
+   - `adb install -r build/app/outputs/flutter-apk/app-prod-release.apk`
+   - Or on Windows when `adb` is not in PATH:
+   - `& "$env:LOCALAPPDATA\Android\Sdk\platform-tools\adb.exe" install -r "build\app\outputs\flutter-apk\app-prod-release.apk"`
+
 ## Free Local Workflow (No Billing)
 
 1. Start Firebase emulators:
