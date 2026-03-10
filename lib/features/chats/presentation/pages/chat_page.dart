@@ -77,6 +77,11 @@ class _ChatPageState extends State<ChatPage> {
   bool _isVoicePlaying = false;
   _ChatTheme _chatTheme = _ChatTheme.defaultTheme;
   String _conversationTitle = '';
+  bool _isGroupConversation = false;
+  DateTime? _conversationCreatedAt;
+  List<String> _conversationMemberIds = const <String>[];
+  final Map<String, Future<String?>> _resolvedAttachmentUrlCache =
+      <String, Future<String?>>{};
 
   @override
   void initState() {
@@ -104,6 +109,10 @@ class _ChatPageState extends State<ChatPage> {
     if (oldWidget.conversationId != widget.conversationId) {
       _peerProfileSubscription?.cancel();
       _conversationTitle = _defaultConversationTitle();
+      _isGroupConversation = false;
+      _conversationCreatedAt = null;
+      _conversationMemberIds = const <String>[];
+      _resolvedAttachmentUrlCache.clear();
       _chatThreadCubit.start(widget.conversationId);
       unawaited(_resetVoicePlayback());
       unawaited(_initRealtimeSignals());
@@ -164,48 +173,116 @@ class _ChatPageState extends State<ChatPage> {
               ),
               PopupMenuButton<_ChatMenuAction>(
                 onSelected: _onChatMenuAction,
-                itemBuilder: (context) => [
-                  const PopupMenuItem(
-                    value: _ChatMenuAction.createGroup,
-                    child: Text('Create group with this contact'),
-                  ),
-                  const PopupMenuItem(
-                    value: _ChatMenuAction.viewContact,
-                    child: Text('View contact'),
-                  ),
-                  const PopupMenuItem(
-                    value: _ChatMenuAction.searchChat,
-                    child: Text('Search in chat'),
-                  ),
-                  const PopupMenuItem(
-                    value: _ChatMenuAction.mediaLinksDocs,
-                    child: Text('Media, links and docs'),
-                  ),
-                  PopupMenuItem(
-                    value: _ChatMenuAction.toggleMute,
-                    child: Text(
-                      _isMuted ? 'Unmute notifications' : 'Mute notifications',
+                itemBuilder: (context) {
+                  final items = <PopupMenuEntry<_ChatMenuAction>>[];
+                  if (!_isGroupConversation) {
+                    items.add(
+                      PopupMenuItem(
+                        value: _ChatMenuAction.createGroup,
+                        child: Text(
+                          _tr(
+                            en: 'Create group with this contact',
+                            ar: 'إنشاء مجموعة مع جهة الاتصال',
+                          ),
+                        ),
+                      ),
+                    );
+                    items.add(
+                      PopupMenuItem(
+                        value: _ChatMenuAction.viewContact,
+                        child: Text(
+                          _tr(en: 'View contact', ar: 'عرض جهة الاتصال'),
+                        ),
+                      ),
+                    );
+                  } else {
+                    items.add(
+                      PopupMenuItem(
+                        value: _ChatMenuAction.viewContact,
+                        child: Text(
+                          _tr(en: 'Group info', ar: 'معلومات المجموعة'),
+                        ),
+                      ),
+                    );
+                  }
+                  items.addAll([
+                    PopupMenuItem(
+                      value: _ChatMenuAction.searchChat,
+                      child: Text(
+                        _tr(en: 'Search in chat', ar: 'بحث في الدردشة'),
+                      ),
                     ),
-                  ),
-                  const PopupMenuItem(
-                    value: _ChatMenuAction.changeTheme,
-                    child: Text('Change chat theme'),
-                  ),
-                  const PopupMenuItem(
-                    value: _ChatMenuAction.reportContact,
-                    child: Text('Report contact'),
-                  ),
-                  PopupMenuItem(
-                    value: _ChatMenuAction.toggleBlock,
-                    child: Text(
-                      _isBlocked ? 'Unblock contact' : 'Block contact',
+                    PopupMenuItem(
+                      value: _ChatMenuAction.mediaLinksDocs,
+                      child: Text(
+                        _tr(
+                          en: 'Media, links and docs',
+                          ar: 'الوسائط والروابط والمستندات',
+                        ),
+                      ),
                     ),
-                  ),
-                  const PopupMenuItem(
-                    value: _ChatMenuAction.clearChat,
-                    child: Text('Clear chat'),
-                  ),
-                ],
+                    PopupMenuItem(
+                      value: _ChatMenuAction.toggleMute,
+                      child: Text(
+                        _isMuted
+                            ? _tr(
+                                en: 'Unmute notifications',
+                                ar: 'إلغاء كتم الإشعارات',
+                              )
+                            : _tr(
+                                en: 'Mute notifications',
+                                ar: 'كتم الإشعارات',
+                              ),
+                      ),
+                    ),
+                    PopupMenuItem(
+                      value: _ChatMenuAction.changeTheme,
+                      child: Text(
+                        _tr(en: 'Change chat theme', ar: 'تغيير سمة الدردشة'),
+                      ),
+                    ),
+                    PopupMenuItem(
+                      value: _ChatMenuAction.reportContact,
+                      child: Text(
+                        _tr(
+                          en: _isGroupConversation
+                              ? 'Report group'
+                              : 'Report contact',
+                          ar: _isGroupConversation
+                              ? 'الإبلاغ عن المجموعة'
+                              : 'الإبلاغ عن جهة الاتصال',
+                        ),
+                      ),
+                    ),
+                    PopupMenuItem(
+                      value: _ChatMenuAction.toggleBlock,
+                      child: Text(
+                        _isBlocked
+                            ? _tr(
+                                en: _isGroupConversation
+                                    ? 'Unblock group'
+                                    : 'Unblock contact',
+                                ar: _isGroupConversation
+                                    ? 'إلغاء حظر المجموعة'
+                                    : 'إلغاء حظر جهة الاتصال',
+                              )
+                            : _tr(
+                                en: _isGroupConversation
+                                    ? 'Block group'
+                                    : 'Block contact',
+                                ar: _isGroupConversation
+                                    ? 'حظر المجموعة'
+                                    : 'حظر جهة الاتصال',
+                              ),
+                      ),
+                    ),
+                    PopupMenuItem(
+                      value: _ChatMenuAction.clearChat,
+                      child: Text(_tr(en: 'Clear chat', ar: 'مسح الدردشة')),
+                    ),
+                  ]);
+                  return items;
+                },
               ),
             ],
           ),
@@ -461,14 +538,24 @@ class _ChatPageState extends State<ChatPage> {
   }
 
   String? _chatSubtitleText() {
+    if (_isGroupConversation) {
+      final count = _conversationMemberIds.length;
+      if (count <= 0) {
+        return null;
+      }
+      return _tr(en: '$count members', ar: '$count أعضاء');
+    }
     if (_peerTyping) {
-      return 'typing...';
+      return _tr(en: 'typing...', ar: 'يكتب...');
     }
     if (_peerOnline) {
-      return 'online';
+      return _tr(en: 'online', ar: 'متصل الآن');
     }
     if (_peerAllowsLastSeen && _peerLastSeenAt != null) {
-      return 'last seen ${_formatLastSeen(_peerLastSeenAt!)}';
+      return _tr(
+        en: 'last seen ${_formatLastSeen(_peerLastSeenAt!)}',
+        ar: 'آخر ظهور ${_formatLastSeen(_peerLastSeenAt!)}',
+      );
     }
     return null;
   }
@@ -571,18 +658,56 @@ class _ChatPageState extends State<ChatPage> {
     });
     await _setPresence(online: true);
 
-    final peer = await _resolveProfileUserIdForConversation();
+    await _loadConversationMetadata();
+    final peer = _isGroupConversation
+        ? null
+        : await _resolveProfileUserIdForConversation();
     if (!mounted) {
       return;
     }
     unawaited(_refreshConversationTitle(peerUserId: peer));
     _subscribeTyping(uid);
-    if (peer != null && peer != uid) {
+    if (!_isGroupConversation && peer != null && peer != uid) {
       _subscribePeerPresence(peer);
       _subscribePeerProfile(peer);
       return;
     }
+    _peerPresenceSubscription?.cancel();
     _peerProfileSubscription?.cancel();
+  }
+
+  Future<void> _loadConversationMetadata() async {
+    if (Firebase.apps.isEmpty) {
+      return;
+    }
+    try {
+      final snapshot = await FirebaseFirestore.instance
+          .collection(FirebasePaths.conversations)
+          .doc(widget.conversationId)
+          .get();
+      final data = snapshot.data() ?? const <String, dynamic>{};
+      final members = _toStringList(data['memberIds']);
+      final type = (data['type'] as String?)?.trim().toLowerCase();
+      final isGroup = type == 'group' || members.length > 2;
+      final createdAt = _toDateTimeValue(data['createdAt']);
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _isGroupConversation = isGroup;
+        _conversationMemberIds = members;
+        _conversationCreatedAt = createdAt;
+      });
+    } catch (_) {
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _isGroupConversation = false;
+        _conversationMemberIds = const <String>[];
+        _conversationCreatedAt = null;
+      });
+    }
   }
 
   void _subscribeTyping(String currentUid) {
@@ -740,6 +865,15 @@ class _ChatPageState extends State<ChatPage> {
   Future<void> _onChatMenuAction(_ChatMenuAction action) async {
     switch (action) {
       case _ChatMenuAction.createGroup:
+        if (_isGroupConversation) {
+          _showSnack(
+            _tr(
+              en: 'This chat is already a group conversation',
+              ar: 'هذه الدردشة مجموعة بالفعل',
+            ),
+          );
+          break;
+        }
         await _createGroupFromCurrentChat();
         break;
       case _ChatMenuAction.viewContact:
@@ -753,7 +887,11 @@ class _ChatPageState extends State<ChatPage> {
         break;
       case _ChatMenuAction.toggleMute:
         setState(() => _isMuted = !_isMuted);
-        _showSnack(_isMuted ? 'Chat muted' : 'Chat unmuted');
+        _showSnack(
+          _isMuted
+              ? _tr(en: 'Chat muted', ar: 'تم كتم الدردشة')
+              : _tr(en: 'Chat unmuted', ar: 'تم إلغاء كتم الدردشة'),
+        );
         break;
       case _ChatMenuAction.changeTheme:
         await _changeChatTheme();
@@ -795,6 +933,9 @@ class _ChatPageState extends State<ChatPage> {
   }
 
   Future<List<String>> _loadConversationMembers() async {
+    if (_conversationMemberIds.isNotEmpty) {
+      return _conversationMemberIds.toList(growable: false);
+    }
     if (Firebase.apps.isEmpty) {
       return <String>{
         _resolveCurrentUserId(),
@@ -809,7 +950,11 @@ class _ChatPageState extends State<ChatPage> {
           .get();
       final raw = doc.data()?['memberIds'];
       if (raw is List) {
-        return raw.whereType<String>().toSet().toList(growable: false);
+        final members = raw.whereType<String>().toSet().toList(growable: false);
+        if (mounted) {
+          setState(() => _conversationMemberIds = members);
+        }
+        return members;
       }
     } catch (_) {
       // ignore and fall back below
@@ -846,8 +991,10 @@ class _ChatPageState extends State<ChatPage> {
       if (isGroup) {
         if (mounted) {
           setState(
-            () =>
-                _conversationTitle = 'Group ${_shortId(widget.conversationId)}',
+            () => _conversationTitle = _tr(
+              en: 'Group ${_shortId(widget.conversationId)}',
+              ar: 'مجموعة ${_shortId(widget.conversationId)}',
+            ),
           );
         }
         return;
@@ -920,7 +1067,12 @@ class _ChatPageState extends State<ChatPage> {
   Future<void> _createGroupFromCurrentChat() async {
     final repository = _resolveConversationRepository();
     if (repository == null) {
-      _showSnack('Conversation service is unavailable right now');
+      _showSnack(
+        _tr(
+          en: 'Conversation service is unavailable right now',
+          ar: 'خدمة المحادثات غير متاحة حالياً',
+        ),
+      );
       return;
     }
 
@@ -937,23 +1089,28 @@ class _ChatPageState extends State<ChatPage> {
       final payload = await showDialog<(String, String)>(
         context: context,
         builder: (dialogContext) => AlertDialog(
-          title: const Text('Create group from this chat'),
+          title: Text(
+            _tr(
+              en: 'Create group from this chat',
+              ar: 'إنشاء مجموعة من هذه الدردشة',
+            ),
+          ),
           content: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
               TextField(
                 controller: titleController,
-                decoration: const InputDecoration(
-                  labelText: 'Group title',
-                  hintText: 'Project group',
+                decoration: InputDecoration(
+                  labelText: _tr(en: 'Group title', ar: 'اسم المجموعة'),
+                  hintText: _tr(en: 'Project group', ar: 'مجموعة المشروع'),
                 ),
               ),
               const SizedBox(height: 12),
               TextField(
                 controller: extraController,
-                decoration: const InputDecoration(
-                  labelText: 'Add members',
-                  hintText: 'uid_2, uid_3',
+                decoration: InputDecoration(
+                  labelText: _tr(en: 'Add members', ar: 'إضافة أعضاء'),
+                  hintText: _tr(en: 'uid_2, uid_3', ar: 'uid_2, uid_3'),
                 ),
               ),
             ],
@@ -961,13 +1118,13 @@ class _ChatPageState extends State<ChatPage> {
           actions: [
             TextButton(
               onPressed: () => Navigator.of(dialogContext).pop(),
-              child: const Text('Cancel'),
+              child: Text(_tr(en: 'Cancel', ar: 'إلغاء')),
             ),
             FilledButton(
               onPressed: () => Navigator.of(
                 dialogContext,
               ).pop((titleController.text, extraController.text)),
-              child: const Text('Create'),
+              child: Text(_tr(en: 'Create', ar: 'إنشاء')),
             ),
           ],
         ),
@@ -979,7 +1136,9 @@ class _ChatPageState extends State<ChatPage> {
 
       final title = payload.$1.trim();
       if (title.isEmpty) {
-        _showSnack('Group title is required');
+        _showSnack(
+          _tr(en: 'Group title is required', ar: 'اسم المجموعة مطلوب'),
+        );
         return;
       }
       final extra = payload.$2
@@ -989,7 +1148,9 @@ class _ChatPageState extends State<ChatPage> {
           .toSet();
       final allMembers = <String>{...basePeers, ...extra}.toList();
       if (allMembers.isEmpty) {
-        _showSnack('No members found to add');
+        _showSnack(
+          _tr(en: 'No members found to add', ar: 'لا يوجد أعضاء لإضافتهم'),
+        );
         return;
       }
 
@@ -1001,13 +1162,16 @@ class _ChatPageState extends State<ChatPage> {
         return;
       }
       if (result is Success<String>) {
-        _showSnack('Group created');
+        _showSnack(_tr(en: 'Group created', ar: 'تم إنشاء المجموعة'));
         if (context.mounted) {
           context.push('/chat/${result.value}');
         }
         return;
       }
-      _showSnack(result.error?.message ?? 'Failed to create group');
+      _showSnack(
+        result.error?.message ??
+            _tr(en: 'Failed to create group', ar: 'فشل إنشاء المجموعة'),
+      );
     } finally {
       titleController.dispose();
       extraController.dispose();
@@ -1015,9 +1179,18 @@ class _ChatPageState extends State<ChatPage> {
   }
 
   Future<void> _viewContactInfo() async {
+    if (_isGroupConversation) {
+      await _showGroupInfoSheet();
+      return;
+    }
     final profileUserId = await _resolveProfileUserIdForConversation();
     if (!mounted || profileUserId == null || profileUserId.isEmpty) {
-      _showSnack('No participant info available');
+      _showSnack(
+        _tr(
+          en: 'No participant info available',
+          ar: 'لا توجد معلومات متاحة عن جهة الاتصال',
+        ),
+      );
       return;
     }
     context.push('/profile/$profileUserId');
@@ -1031,6 +1204,150 @@ class _ChatPageState extends State<ChatPage> {
     final currentUserId = _resolveCurrentUserId();
     final peer = members.where((id) => id != currentUserId).firstOrNull;
     return peer ?? currentUserId;
+  }
+
+  Future<void> _showGroupInfoSheet() async {
+    final members = await _loadConversationMembers();
+    final memberNames = await _resolveMemberDisplayNames(members);
+    if (!mounted) {
+      return;
+    }
+
+    final messages = _chatThreadCubit.state.messages;
+    final mediaCount = messages
+        .where(
+          (m) => m.type == MessageType.image || m.type == MessageType.video,
+        )
+        .length;
+    final docsCount = messages.where((m) => m.type == MessageType.file).length;
+    final linksCount = _extractLinks(messages).length;
+    final createdLabel = _conversationCreatedAt == null
+        ? _tr(en: 'Unknown', ar: 'غير معروف')
+        : _formatLastSeen(_conversationCreatedAt!);
+
+    await showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      builder: (context) => SafeArea(
+        child: DraggableScrollableSheet(
+          expand: false,
+          initialChildSize: 0.75,
+          minChildSize: 0.45,
+          maxChildSize: 0.95,
+          builder: (context, controller) => ListView(
+            controller: controller,
+            padding: const EdgeInsets.fromLTRB(16, 12, 16, 24),
+            children: [
+              Text(
+                _tr(en: 'Group info', ar: 'معلومات المجموعة'),
+                style: Theme.of(context).textTheme.titleLarge,
+              ),
+              const SizedBox(height: 8),
+              Text(
+                _conversationTitle,
+                style: Theme.of(context).textTheme.titleMedium,
+              ),
+              const SizedBox(height: 6),
+              Text(
+                _tr(
+                  en: 'Created: $createdLabel',
+                  ar: 'تاريخ الإنشاء: $createdLabel',
+                ),
+                style: Theme.of(context).textTheme.bodyMedium,
+              ),
+              const SizedBox(height: 6),
+              Text(
+                _tr(
+                  en: '${members.length} members',
+                  ar: '${members.length} أعضاء',
+                ),
+                style: Theme.of(context).textTheme.bodyMedium,
+              ),
+              const SizedBox(height: 16),
+              Card(
+                child: Column(
+                  children: [
+                    ListTile(
+                      leading: const Icon(Icons.photo_library_outlined),
+                      title: Text(_tr(en: 'Media', ar: 'الوسائط')),
+                      trailing: Text('$mediaCount'),
+                    ),
+                    const Divider(height: 0),
+                    ListTile(
+                      leading: const Icon(Icons.description_outlined),
+                      title: Text(_tr(en: 'Documents', ar: 'المستندات')),
+                      trailing: Text('$docsCount'),
+                    ),
+                    const Divider(height: 0),
+                    ListTile(
+                      leading: const Icon(Icons.link_outlined),
+                      title: Text(_tr(en: 'Links', ar: 'الروابط')),
+                      trailing: Text('$linksCount'),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 12),
+              Text(
+                _tr(en: 'Participants', ar: 'المشاركون'),
+                style: Theme.of(context).textTheme.titleMedium,
+              ),
+              const SizedBox(height: 8),
+              ...members.map((memberId) {
+                final displayName = memberNames[memberId] ?? memberId;
+                return ListTile(
+                  dense: true,
+                  leading: const Icon(Icons.person_outline),
+                  title: Text(displayName),
+                  subtitle: displayName == memberId ? null : Text(memberId),
+                );
+              }),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Future<Map<String, String>> _resolveMemberDisplayNames(
+    List<String> memberIds,
+  ) async {
+    final names = <String, String>{};
+    final currentUserId = _resolveCurrentUserId();
+    for (final memberId in memberIds) {
+      if (memberId == currentUserId) {
+        names[memberId] = _tr(en: 'You', ar: 'أنت');
+      } else {
+        names[memberId] = memberId;
+      }
+    }
+    if (Firebase.apps.isEmpty || memberIds.isEmpty) {
+      return names;
+    }
+
+    for (final memberId in memberIds) {
+      if (memberId == currentUserId) {
+        continue;
+      }
+      try {
+        final snapshot = await FirebaseFirestore.instance
+            .collection(FirebasePaths.users)
+            .doc(memberId)
+            .get();
+        final data = snapshot.data() ?? const <String, dynamic>{};
+        final displayName = (data['displayName'] as String?)?.trim();
+        final phone = (data['phone'] as String?)?.trim();
+        final value = (displayName != null && displayName.isNotEmpty)
+            ? displayName
+            : (phone != null && phone.isNotEmpty)
+            ? phone
+            : memberId;
+        names[memberId] = value;
+      } catch (_) {
+        // Keep fallback member id on lookup errors.
+      }
+    }
+    return names;
   }
 
   Future<void> _searchInChat() async {
@@ -1079,52 +1396,269 @@ class _ChatPageState extends State<ChatPage> {
 
   Future<void> _showMediaLinksAndDocs() async {
     final messages = _chatThreadCubit.state.messages;
-    final media = messages
-        .where(
-          (m) => m.type == MessageType.image || m.type == MessageType.video,
-        )
-        .toList(growable: false);
-    final docs = messages
-        .where((m) => m.type == MessageType.file)
-        .toList(growable: false);
-    final links = <String>[];
-    final linkRegex = RegExp(r'https?://\S+');
-    for (final m in messages) {
-      links.addAll(linkRegex.allMatches(m.text).map((e) => e.group(0)!));
+    final mediaItems = <_AttachmentItem>[];
+    final docsItems = <_AttachmentItem>[];
+    for (final message in messages) {
+      if (message.isDeleted) {
+        continue;
+      }
+      final isAttachmentMessage =
+          message.type == MessageType.image ||
+          message.type == MessageType.video ||
+          message.type == MessageType.file;
+      if (!isAttachmentMessage) {
+        continue;
+      }
+      final payload = _tryDecodePayload(message.text);
+      final source = _resolveAttachmentSource(
+        payload,
+        fallbackText: message.text,
+      );
+      if (source == null || source.isEmpty) {
+        continue;
+      }
+      final title = payload?['name']?.toString().trim().isNotEmpty == true
+          ? payload!['name']!.toString().trim()
+          : _fallbackAttachmentTitle(message.type);
+      final item = _AttachmentItem(
+        title: title,
+        source: source,
+        messageType: message.type,
+        meta: _messageMeta(message),
+      );
+      if (message.type == MessageType.file) {
+        docsItems.add(item);
+      } else {
+        mediaItems.add(item);
+      }
     }
+    final links = _extractLinks(messages);
 
     if (!mounted) {
       return;
     }
     await showModalBottomSheet<void>(
       context: context,
+      isScrollControlled: true,
       builder: (context) => SafeArea(
         child: ListView(
-          shrinkWrap: true,
+          padding: const EdgeInsets.symmetric(vertical: 8),
           children: [
             ListTile(
               leading: const Icon(Icons.photo_library_outlined),
-              title: Text('Media (${media.length})'),
+              title: Text(
+                _tr(
+                  en: 'Media (${mediaItems.length})',
+                  ar: 'الوسائط (${mediaItems.length})',
+                ),
+              ),
             ),
+            if (mediaItems.isEmpty)
+              Padding(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 16,
+                  vertical: 4,
+                ),
+                child: Text(
+                  _tr(en: 'No media found', ar: 'لا توجد وسائط'),
+                  style: Theme.of(context).textTheme.bodySmall,
+                ),
+              )
+            else
+              ...mediaItems.map(
+                (item) => ListTile(
+                  leading: Icon(
+                    item.messageType == MessageType.image
+                        ? Icons.image_outlined
+                        : Icons.videocam_outlined,
+                  ),
+                  title: Text(item.title),
+                  subtitle: Text(item.meta),
+                  onTap: () async {
+                    if (item.messageType == MessageType.image) {
+                      await _showImagePreview(item.source);
+                      return;
+                    }
+                    await _openAttachmentUrl(item.source);
+                  },
+                ),
+              ),
+            const Divider(height: 24),
             ListTile(
               leading: const Icon(Icons.description_outlined),
-              title: Text('Documents (${docs.length})'),
+              title: Text(
+                _tr(
+                  en: 'Documents (${docsItems.length})',
+                  ar: 'المستندات (${docsItems.length})',
+                ),
+              ),
             ),
+            if (docsItems.isEmpty)
+              Padding(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 16,
+                  vertical: 4,
+                ),
+                child: Text(
+                  _tr(en: 'No documents found', ar: 'لا توجد مستندات'),
+                  style: Theme.of(context).textTheme.bodySmall,
+                ),
+              )
+            else
+              ...docsItems.map(
+                (item) => ListTile(
+                  leading: const Icon(Icons.description_outlined),
+                  title: Text(item.title),
+                  subtitle: Text(item.meta),
+                  onTap: () => _openAttachmentUrl(item.source),
+                ),
+              ),
+            const Divider(height: 24),
             ListTile(
               leading: const Icon(Icons.link_outlined),
-              title: Text('Links (${links.length})'),
-              subtitle: links.isEmpty
-                  ? null
-                  : Text(
-                      links.first,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                    ),
+              title: Text(
+                _tr(
+                  en: 'Links (${links.length})',
+                  ar: 'الروابط (${links.length})',
+                ),
+              ),
             ),
+            if (links.isEmpty)
+              Padding(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 16,
+                  vertical: 4,
+                ),
+                child: Text(
+                  _tr(en: 'No links found', ar: 'لا توجد روابط'),
+                  style: Theme.of(context).textTheme.bodySmall,
+                ),
+              )
+            else
+              ...links.map(
+                (link) => ListTile(
+                  title: Text(
+                    link,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                  trailing: IconButton(
+                    tooltip: _tr(en: 'Copy link', ar: 'نسخ الرابط'),
+                    onPressed: () =>
+                        Clipboard.setData(ClipboardData(text: link)),
+                    icon: const Icon(Icons.copy_outlined),
+                  ),
+                  onTap: () => _openAttachmentUrl(link),
+                ),
+              ),
           ],
         ),
       ),
     );
+  }
+
+  List<String> _extractLinks(Iterable<ChatMessageView> messages) {
+    final links = <String>{};
+    final linkRegex = RegExp(r'https?://\S+');
+    for (final message in messages) {
+      for (final match in linkRegex.allMatches(message.text)) {
+        final link = match.group(0);
+        if (link != null && link.isNotEmpty) {
+          links.add(link);
+        }
+      }
+    }
+    return links.toList(growable: false);
+  }
+
+  String _fallbackAttachmentTitle(MessageType type) {
+    return switch (type) {
+      MessageType.image => _tr(en: 'Image', ar: 'صورة'),
+      MessageType.video => _tr(en: 'Video', ar: 'فيديو'),
+      MessageType.file => _tr(en: 'Document', ar: 'مستند'),
+      MessageType.voice => _tr(en: 'Voice note', ar: 'رسالة صوتية'),
+      _ => type.name,
+    };
+  }
+
+  String? _resolveAttachmentSource(
+    Map<String, Object?>? payload, {
+    String? fallbackText,
+  }) {
+    final nestedFile = payload?['file'];
+    final nestedMedia = payload?['media'];
+    final nestedMaps = <Map<dynamic, dynamic>>[
+      if (nestedFile is Map) nestedFile,
+      if (nestedMedia is Map) nestedMedia,
+    ];
+    final candidates = <Object?>[
+      payload?['url'],
+      payload?['downloadUrl'],
+      payload?['fileUrl'],
+      payload?['mediaUrl'],
+      payload?['attachmentUrl'],
+      payload?['audioUrl'],
+      payload?['voiceUrl'],
+      payload?['uri'],
+      payload?['path'],
+      payload?['filePath'],
+      payload?['storagePath'],
+      payload?['storageUri'],
+      payload?['objectPath'],
+      payload?['fullPath'],
+      payload?['src'],
+      payload?['source'],
+      for (final item in nestedMaps) item['url'],
+      for (final item in nestedMaps) item['downloadUrl'],
+      for (final item in nestedMaps) item['fileUrl'],
+      for (final item in nestedMaps) item['mediaUrl'],
+      for (final item in nestedMaps) item['audioUrl'],
+      for (final item in nestedMaps) item['voiceUrl'],
+      for (final item in nestedMaps) item['path'],
+      for (final item in nestedMaps) item['filePath'],
+      for (final item in nestedMaps) item['storagePath'],
+      for (final item in nestedMaps) item['objectPath'],
+      for (final item in nestedMaps) item['src'],
+      for (final item in nestedMaps) item['source'],
+    ];
+    for (final candidate in candidates) {
+      final value = candidate?.toString().trim();
+      if (value != null &&
+          value.isNotEmpty &&
+          value != 'null' &&
+          !value.startsWith('{') &&
+          !value.startsWith('[')) {
+        return value;
+      }
+    }
+    final fallback = fallbackText?.trim();
+    if (fallback != null &&
+        fallback.isNotEmpty &&
+        _seemsAttachmentText(fallback)) {
+      return fallback;
+    }
+    return null;
+  }
+
+  bool _seemsAttachmentText(String value) {
+    final normalized = value.trim();
+    if (normalized.isEmpty) {
+      return false;
+    }
+    final lower = normalized.toLowerCase();
+    if (lower.startsWith('http://') ||
+        lower.startsWith('https://') ||
+        lower.startsWith('gs://')) {
+      return true;
+    }
+    if (lower.startsWith('media/') ||
+        lower.startsWith('status/') ||
+        lower.startsWith('attachments/') ||
+        lower.startsWith('upload/')) {
+      return true;
+    }
+    return !normalized.contains(' ') &&
+        (normalized.contains('/') || normalized.contains('\\'));
   }
 
   Future<void> _changeChatTheme() async {
@@ -1717,9 +2251,27 @@ class _ChatPageState extends State<ChatPage> {
     required ChatMessageView message,
     required Map<String, Object?>? payload,
   }) async {
-    final url = payload?['url']?.toString().trim() ?? '';
-    if (url.isEmpty) {
-      _showSnack('Voice note file is unavailable');
+    final source = _resolveAttachmentSource(
+      payload,
+      fallbackText: message.text,
+    );
+    if (source == null || source.isEmpty) {
+      _showSnack(
+        _tr(
+          en: 'Voice note file is unavailable',
+          ar: 'ملف الرسالة الصوتية غير متاح',
+        ),
+      );
+      return false;
+    }
+    final url = await _resolveAttachmentDownloadUrl(source);
+    if (url == null || url.isEmpty) {
+      _showSnack(
+        _tr(
+          en: 'Voice note file is unavailable',
+          ar: 'ملف الرسالة الصوتية غير متاح',
+        ),
+      );
       return false;
     }
 
@@ -1737,13 +2289,19 @@ class _ChatPageState extends State<ChatPage> {
       });
       return true;
     } catch (_) {
-      _showSnack('Failed to load this voice note');
+      _showSnack(
+        _tr(
+          en: 'Failed to load this voice note',
+          ar: 'فشل تحميل الرسالة الصوتية',
+        ),
+      );
       return false;
     }
   }
 
   Duration _resolveVoiceDuration(Map<String, Object?>? payload) {
-    final durationValue = payload?['durationSec'];
+    final durationValue = payload?['durationSec'] ?? payload?['duration'];
+    final durationMsValue = payload?['durationMs'];
     if (durationValue is int && durationValue >= 0) {
       return Duration(seconds: durationValue);
     }
@@ -1751,6 +2309,15 @@ class _ChatPageState extends State<ChatPage> {
       final parsed = int.tryParse(durationValue);
       if (parsed != null && parsed >= 0) {
         return Duration(seconds: parsed);
+      }
+    }
+    if (durationMsValue is int && durationMsValue >= 0) {
+      return Duration(milliseconds: durationMsValue);
+    }
+    if (durationMsValue is String) {
+      final parsed = int.tryParse(durationMsValue);
+      if (parsed != null && parsed >= 0) {
+        return Duration(milliseconds: parsed);
       }
     }
 
@@ -1866,35 +2433,64 @@ class _ChatPageState extends State<ChatPage> {
   }
 
   List<FirebaseStorage> _storageCandidates() {
-    final candidates = <FirebaseStorage>[FirebaseStorage.instance];
     if (Firebase.apps.isEmpty) {
-      return candidates;
+      return <FirebaseStorage>[FirebaseStorage.instance];
     }
 
-    final configuredBucket = Firebase.app().options.storageBucket;
-    if (configuredBucket == null || configuredBucket.isEmpty) {
-      return candidates;
+    final options = Firebase.app().options;
+    final configuredBucket = _normalizeBucketName(options.storageBucket);
+    final projectId = options.projectId.trim();
+    final preferredBuckets = <String>[];
+    void addBucket(String? bucket) {
+      final normalized = _normalizeBucketName(bucket);
+      if (normalized == null || preferredBuckets.contains(normalized)) {
+        return;
+      }
+      preferredBuckets.add(normalized);
     }
 
-    final bucketNames = <String>{configuredBucket};
-    if (configuredBucket.endsWith('.firebasestorage.app')) {
-      bucketNames.add(
+    // Prefer explicit appspot bucket when config provides firebasestorage.app,
+    // then fallback to the configured bucket and project-derived aliases.
+    if (configuredBucket != null &&
+        configuredBucket.endsWith('.firebasestorage.app')) {
+      addBucket(
         configuredBucket.replaceFirst('.firebasestorage.app', '.appspot.com'),
       );
-    } else if (configuredBucket.endsWith('.appspot.com')) {
-      bucketNames.add(
-        configuredBucket.replaceFirst('.appspot.com', '.firebasestorage.app'),
-      );
+      addBucket(configuredBucket);
+    } else {
+      addBucket(configuredBucket);
+    }
+    if (projectId.isNotEmpty) {
+      addBucket('$projectId.appspot.com');
+      addBucket('$projectId.firebasestorage.app');
     }
 
-    for (final bucket in bucketNames) {
+    final candidates = <FirebaseStorage>[];
+    for (final bucket in preferredBuckets) {
       try {
         candidates.add(FirebaseStorage.instanceFor(bucket: 'gs://$bucket'));
       } catch (_) {
         // Ignore invalid candidate buckets.
       }
     }
+    candidates.add(FirebaseStorage.instance);
     return candidates;
+  }
+
+  String? _normalizeBucketName(String? bucket) {
+    final trimmed = bucket?.trim();
+    if (trimmed == null || trimmed.isEmpty) {
+      return null;
+    }
+    var normalized = trimmed;
+    if (normalized.startsWith('gs://')) {
+      normalized = normalized.substring(5);
+    }
+    final slashIndex = normalized.indexOf('/');
+    if (slashIndex >= 0) {
+      normalized = normalized.substring(0, slashIndex);
+    }
+    return normalized.isEmpty ? null : normalized;
   }
 
   Future<void> _putObject({
@@ -1904,7 +2500,11 @@ class _ChatPageState extends State<ChatPage> {
     String? filePath,
   }) async {
     if (bytes != null) {
-      await ref.putData(Uint8List.fromList(bytes), metadata);
+      await _putDataWithRetry(
+        ref: ref,
+        metadata: metadata,
+        bytes: Uint8List.fromList(bytes),
+      );
       return;
     }
 
@@ -1913,17 +2513,73 @@ class _ChatPageState extends State<ChatPage> {
     }
 
     final file = File(filePath);
+    final fileSize = await file.length();
+    // Small files are uploaded using putData to avoid flaky resumable sessions
+    // on some Android devices.
+    if (fileSize <= 25 * 1024 * 1024) {
+      final data = await file.readAsBytes();
+      await _putDataWithRetry(ref: ref, metadata: metadata, bytes: data);
+      return;
+    }
+
     try {
-      await ref.putFile(file, metadata);
+      await _putFileWithRetry(ref: ref, metadata: metadata, file: file);
     } catch (_) {
-      // Retry with a non-resumable upload path for devices that fail resumable sessions.
-      final fileSize = await file.length();
-      if (fileSize > 20 * 1024 * 1024) {
+      // Last fallback for large files when resumable sessions fail repeatedly.
+      if (fileSize > 40 * 1024 * 1024) {
         rethrow;
       }
       final fallbackBytes = await file.readAsBytes();
-      await ref.putData(fallbackBytes, metadata);
+      await _putDataWithRetry(
+        ref: ref,
+        metadata: metadata,
+        bytes: fallbackBytes,
+      );
     }
+  }
+
+  Future<void> _putDataWithRetry({
+    required Reference ref,
+    required SettableMetadata metadata,
+    required Uint8List bytes,
+  }) async {
+    Object? lastError;
+    for (var attempt = 0; attempt < 3; attempt++) {
+      try {
+        await ref.putData(bytes, metadata);
+        return;
+      } catch (error) {
+        lastError = error;
+        if (attempt < 2) {
+          await Future<void>.delayed(
+            Duration(milliseconds: 250 * (attempt + 1)),
+          );
+        }
+      }
+    }
+    throw lastError ?? StateError('Unable to upload attachment data');
+  }
+
+  Future<void> _putFileWithRetry({
+    required Reference ref,
+    required SettableMetadata metadata,
+    required File file,
+  }) async {
+    Object? lastError;
+    for (var attempt = 0; attempt < 3; attempt++) {
+      try {
+        await ref.putFile(file, metadata);
+        return;
+      } catch (error) {
+        lastError = error;
+        if (attempt < 2) {
+          await Future<void>.delayed(
+            Duration(milliseconds: 350 * (attempt + 1)),
+          );
+        }
+      }
+    }
+    throw lastError ?? StateError('Unable to upload attachment file');
   }
 
   String _contentTypeFor(MessageType type, String? extension) {
@@ -1956,27 +2612,27 @@ class _ChatPageState extends State<ChatPage> {
                 if (!message.isDeleted)
                   ListTile(
                     leading: const Icon(Icons.reply_outlined),
-                    title: const Text('Reply'),
+                    title: Text(_tr(en: 'Reply', ar: 'رد')),
                     onTap: () =>
                         Navigator.of(context).pop(_MessageAction.reply),
                   ),
                 if (!message.isDeleted)
                   ListTile(
                     leading: const Icon(Icons.copy_outlined),
-                    title: const Text('Copy'),
+                    title: Text(_tr(en: 'Copy', ar: 'نسخ')),
                     onTap: () => Navigator.of(context).pop(_MessageAction.copy),
                   ),
                 if (!message.isDeleted)
                   ListTile(
                     leading: const Icon(Icons.forward_outlined),
-                    title: const Text('Forward'),
+                    title: Text(_tr(en: 'Forward', ar: 'إعادة توجيه')),
                     onTap: () =>
                         Navigator.of(context).pop(_MessageAction.forward),
                   ),
                 if (!message.isDeleted)
                   ListTile(
                     leading: const Icon(Icons.emoji_emotions_outlined),
-                    title: const Text('React'),
+                    title: Text(_tr(en: 'React', ar: 'تفاعل')),
                     onTap: () =>
                         Navigator.of(context).pop(_MessageAction.react),
                   ),
@@ -1987,8 +2643,14 @@ class _ChatPageState extends State<ChatPage> {
                     ),
                     title: Text(
                       message.isStarred
-                          ? 'Remove from starred'
-                          : 'Add to starred',
+                          ? _tr(
+                              en: 'Remove from starred',
+                              ar: 'إزالة من الرسائل المميزة',
+                            )
+                          : _tr(
+                              en: 'Add to starred',
+                              ar: 'إضافة إلى الرسائل المميزة',
+                            ),
                     ),
                     onTap: () => Navigator.of(context).pop(_MessageAction.star),
                   ),
@@ -2000,7 +2662,9 @@ class _ChatPageState extends State<ChatPage> {
                           : Icons.push_pin_outlined,
                     ),
                     title: Text(
-                      message.isPinned ? 'Unpin message' : 'Pin message',
+                      message.isPinned
+                          ? _tr(en: 'Unpin message', ar: 'إلغاء تثبيت الرسالة')
+                          : _tr(en: 'Pin message', ar: 'تثبيت الرسالة'),
                     ),
                     onTap: () => Navigator.of(context).pop(_MessageAction.pin),
                   ),
@@ -2016,13 +2680,13 @@ class _ChatPageState extends State<ChatPage> {
                         message.type == MessageType.system))
                   ListTile(
                     leading: const Icon(Icons.edit_outlined),
-                    title: const Text('Edit'),
+                    title: Text(_tr(en: 'Edit', ar: 'تعديل')),
                     onTap: () => Navigator.of(context).pop(_MessageAction.edit),
                   ),
                 if (!message.isDeleted)
                   ListTile(
                     leading: const Icon(Icons.delete_outline),
-                    title: const Text('Delete'),
+                    title: Text(_tr(en: 'Delete', ar: 'حذف')),
                     onTap: () =>
                         Navigator.of(context).pop(_MessageAction.delete),
                   ),
@@ -2044,7 +2708,7 @@ class _ChatPageState extends State<ChatPage> {
       case _MessageAction.copy:
         await Clipboard.setData(ClipboardData(text: message.text));
         if (mounted) {
-          _showSnack('Message copied');
+          _showSnack(_tr(en: 'Message copied', ar: 'تم نسخ الرسالة'));
         }
         break;
       case _MessageAction.info:
@@ -2079,7 +2743,7 @@ class _ChatPageState extends State<ChatPage> {
           children: [
             ListTile(
               leading: const Icon(Icons.remove_circle_outline),
-              title: const Text('Remove my reaction'),
+              title: Text(_tr(en: 'Remove my reaction', ar: 'إزالة تفاعلي')),
               onTap: () => Navigator.of(context).pop(''),
             ),
             _buildReactionOption(context, '\u{1F44D}'),
@@ -2100,7 +2764,11 @@ class _ChatPageState extends State<ChatPage> {
       emoji: selected.isEmpty ? null : selected,
     );
     if (success && mounted) {
-      _showSnack(selected.isEmpty ? 'Reaction removed' : 'Reaction updated');
+      _showSnack(
+        selected.isEmpty
+            ? _tr(en: 'Reaction removed', ar: 'تمت إزالة التفاعل')
+            : _tr(en: 'Reaction updated', ar: 'تم تحديث التفاعل'),
+      );
     }
   }
 
@@ -2116,8 +2784,14 @@ class _ChatPageState extends State<ChatPage> {
     if (success && mounted) {
       _showSnack(
         message.isStarred
-            ? 'Removed from starred messages'
-            : 'Added to starred messages',
+            ? _tr(
+                en: 'Removed from starred messages',
+                ar: 'تمت الإزالة من الرسائل المميزة',
+              )
+            : _tr(
+                en: 'Added to starred messages',
+                ar: 'تمت الإضافة إلى الرسائل المميزة',
+              ),
       );
     }
   }
@@ -2125,7 +2799,11 @@ class _ChatPageState extends State<ChatPage> {
   Future<void> _togglePinMessage(ChatMessageView message) async {
     final success = await _chatThreadCubit.toggleMessagePin(message);
     if (success && mounted) {
-      _showSnack(message.isPinned ? 'Message unpinned' : 'Message pinned');
+      _showSnack(
+        message.isPinned
+            ? _tr(en: 'Message unpinned', ar: 'تم إلغاء تثبيت الرسالة')
+            : _tr(en: 'Message pinned', ar: 'تم تثبيت الرسالة'),
+      );
     }
   }
 
@@ -2143,7 +2821,7 @@ class _ChatPageState extends State<ChatPage> {
       newText: updatedText,
     );
     if (success && mounted) {
-      _showSnack('Message updated');
+      _showSnack(_tr(en: 'Message updated', ar: 'تم تحديث الرسالة'));
     }
   }
 
@@ -2157,7 +2835,7 @@ class _ChatPageState extends State<ChatPage> {
       targetConversationId: targetConversationId,
     );
     if (success && mounted) {
-      _showSnack('Message forwarded');
+      _showSnack(_tr(en: 'Message forwarded', ar: 'تمت إعادة توجيه الرسالة'));
     }
   }
 
@@ -2176,8 +2854,8 @@ class _ChatPageState extends State<ChatPage> {
       return;
     }
     final label = scope == _DeleteScope.forMe
-        ? 'Message deleted for you'
-        : 'Message deleted for everyone';
+        ? _tr(en: 'Message deleted for you', ar: 'تم حذف الرسالة لديك')
+        : _tr(en: 'Message deleted for everyone', ar: 'تم حذف الرسالة للجميع');
     _showSnack(label);
   }
 
@@ -2194,12 +2872,12 @@ class _ChatPageState extends State<ChatPage> {
           children: [
             ListTile(
               leading: const Icon(Icons.person_outline),
-              title: const Text('Delete for me'),
+              title: Text(_tr(en: 'Delete for me', ar: 'حذف لدي')),
               onTap: () => Navigator.of(context).pop(_DeleteScope.forMe),
             ),
             ListTile(
               leading: const Icon(Icons.groups_outlined),
-              title: const Text('Delete for everyone'),
+              title: Text(_tr(en: 'Delete for everyone', ar: 'حذف لدى الجميع')),
               onTap: () => Navigator.of(context).pop(_DeleteScope.forEveryone),
             ),
           ],
@@ -2252,9 +2930,10 @@ class _ChatPageState extends State<ChatPage> {
   Future<void> _showMessageInfo(ChatMessageView message) async {
     if (!message.isMine) {
       _showSnack(
-        _isArabicUi()
-            ? 'معلومات الرسالة للمرسل فقط'
-            : 'Message info is available only for sender',
+        _tr(
+          en: 'Message info is available only for sender',
+          ar: 'معلومات الرسالة متاحة للمرسل فقط',
+        ),
       );
       return;
     }
@@ -2264,36 +2943,37 @@ class _ChatPageState extends State<ChatPage> {
     final reactions = message.reactionsByUser.values.isEmpty
         ? '-'
         : message.reactionsByUser.values.join(' ');
-    final isArabic = _isArabicUi();
+    final details = _tr(
+      en:
+          'Message ID: ${message.id}\n'
+          'Sender ID: ${message.senderId}\n'
+          'Sent at: $sentAt\n'
+          'Edited at: $editedAt\n'
+          'Deleted at: $deletedAt\n'
+          'Reply to: ${message.replyToMessageId ?? '-'}\n'
+          'Starred: ${message.isStarred}\n'
+          'Pinned: ${message.isPinned}\n'
+          'Reactions: $reactions',
+      ar:
+          'معرف الرسالة: ${message.id}\n'
+          'معرف المرسل: ${message.senderId}\n'
+          'وقت الإرسال: $sentAt\n'
+          'وقت التعديل: $editedAt\n'
+          'وقت الحذف: $deletedAt\n'
+          'رد على: ${message.replyToMessageId ?? '-'}\n'
+          'مميزة: ${message.isStarred ? 'نعم' : 'لا'}\n'
+          'مثبتة: ${message.isPinned ? 'نعم' : 'لا'}\n'
+          'التفاعلات: $reactions',
+    );
     await showDialog<void>(
       context: context,
       builder: (context) => AlertDialog(
-        title: Text(isArabic ? 'معلومات الرسالة' : 'Message info'),
-        content: SelectableText(
-          isArabic
-              ? 'معرّف الرسالة: ${message.id}\n'
-                    'معرّف المرسل: ${message.senderId}\n'
-                    'وقت الإرسال: $sentAt\n'
-                    'وقت التعديل: $editedAt\n'
-                    'وقت الحذف: $deletedAt\n'
-                    'الرد على: ${message.replyToMessageId ?? '-'}\n'
-                    'مميّزة: ${message.isStarred ? 'نعم' : 'لا'}\n'
-                    'مثبتة: ${message.isPinned ? 'نعم' : 'لا'}\n'
-                    'التفاعلات: $reactions'
-              : 'Message ID: ${message.id}\n'
-                    'Sender ID: ${message.senderId}\n'
-                    'Sent at: $sentAt\n'
-                    'Edited at: $editedAt\n'
-                    'Deleted at: $deletedAt\n'
-                    'Reply to: ${message.replyToMessageId ?? '-'}\n'
-                    'Starred: ${message.isStarred}\n'
-                    'Pinned: ${message.isPinned}\n'
-                    'Reactions: $reactions',
-        ),
+        title: Text(_tr(en: 'Message info', ar: 'معلومات الرسالة')),
+        content: SelectableText(details),
         actions: [
           TextButton(
             onPressed: () => Navigator.of(context).pop(),
-            child: Text(isArabic ? 'إغلاق' : 'Close'),
+            child: Text(_tr(en: 'Close', ar: 'إغلاق')),
           ),
         ],
       ),
@@ -2347,10 +3027,15 @@ class _ChatPageState extends State<ChatPage> {
           MessageType.video => Icons.videocam_outlined,
           _ => Icons.description_outlined,
         };
-        final title = payload?['name']?.toString() ?? message.type.name;
-        final url = payload?['url']?.toString().trim();
-        final hasUrl = url != null && url.isNotEmpty;
-        final attachmentUrl = url ?? '';
+        final title = payload?['name']?.toString().trim().isNotEmpty == true
+            ? payload!['name']!.toString().trim()
+            : _fallbackAttachmentTitle(message.type);
+        final attachmentSource = _resolveAttachmentSource(
+          payload,
+          fallbackText: message.text,
+        );
+        final hasAttachment =
+            attachmentSource != null && attachmentSource.isNotEmpty;
         return Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
@@ -2368,29 +3053,12 @@ class _ChatPageState extends State<ChatPage> {
                 ),
               ],
             ),
-            if (message.type == MessageType.image && hasUrl)
+            if (message.type == MessageType.image && hasAttachment)
               Padding(
                 padding: const EdgeInsets.only(top: 8),
-                child: GestureDetector(
-                  onTap: () => _showImagePreview(attachmentUrl),
-                  child: ClipRRect(
-                    borderRadius: BorderRadius.circular(10),
-                    child: Image.network(
-                      attachmentUrl,
-                      width: 220,
-                      height: 140,
-                      fit: BoxFit.cover,
-                      errorBuilder: (context, error, stackTrace) {
-                        return _buildAttachmentErrorTile(
-                          icon: Icons.broken_image_outlined,
-                          message: 'Image preview is unavailable',
-                        );
-                      },
-                    ),
-                  ),
-                ),
+                child: _buildImageAttachmentPreview(attachmentSource),
               )
-            else if (hasUrl)
+            else if (hasAttachment)
               Padding(
                 padding: const EdgeInsets.only(top: 8),
                 child: Wrap(
@@ -2398,7 +3066,7 @@ class _ChatPageState extends State<ChatPage> {
                   runSpacing: 6,
                   children: [
                     OutlinedButton.icon(
-                      onPressed: () => _openAttachmentUrl(attachmentUrl),
+                      onPressed: () => _openAttachmentUrl(attachmentSource),
                       icon: Icon(
                         message.type == MessageType.file
                             ? Icons.description_outlined
@@ -2406,15 +3074,16 @@ class _ChatPageState extends State<ChatPage> {
                       ),
                       label: Text(
                         message.type == MessageType.file
-                            ? 'Open document'
-                            : 'Open video',
+                            ? _tr(en: 'Open document', ar: 'فتح المستند')
+                            : _tr(en: 'Open video', ar: 'فتح الفيديو'),
                       ),
                     ),
                     OutlinedButton.icon(
-                      onPressed: () =>
-                          Clipboard.setData(ClipboardData(text: attachmentUrl)),
+                      onPressed: () => Clipboard.setData(
+                        ClipboardData(text: attachmentSource),
+                      ),
                       icon: const Icon(Icons.copy_outlined),
-                      label: const Text('Copy link'),
+                      label: Text(_tr(en: 'Copy link', ar: 'نسخ الرابط')),
                     ),
                   ],
                 ),
@@ -2424,7 +3093,10 @@ class _ChatPageState extends State<ChatPage> {
                 padding: const EdgeInsets.only(top: 6),
                 child: _buildAttachmentErrorTile(
                   icon: Icons.cloud_off_outlined,
-                  message: 'Attachment link is unavailable',
+                  message: _tr(
+                    en: 'Attachment link is unavailable',
+                    ar: 'رابط الملف غير متاح',
+                  ),
                 ),
               ),
           ],
@@ -2437,10 +3109,17 @@ class _ChatPageState extends State<ChatPage> {
         final name = payload?['name']?.toString();
         final phone = payload?['phone']?.toString();
         if (lat != null && lng != null) {
-          return Text('Location: $lat, $lng');
+          return Text(
+            _tr(en: 'Location: $lat, $lng', ar: 'الموقع: $lat, $lng'),
+          );
         }
         if (name != null && phone != null) {
-          return Text('Contact: $name ($phone)');
+          return Text(
+            _tr(
+              en: 'Contact: $name ($phone)',
+              ar: 'جهة الاتصال: $name ($phone)',
+            ),
+          );
         }
         return Text(message.text);
       case MessageType.text:
@@ -2470,10 +3149,70 @@ class _ChatPageState extends State<ChatPage> {
     );
   }
 
-  Future<void> _openAttachmentUrl(String rawUrl) async {
-    final uri = Uri.tryParse(rawUrl.trim());
-    if (uri == null || (!uri.hasScheme && !uri.hasAuthority)) {
-      _showSnack('Attachment link is invalid');
+  Widget _buildImageAttachmentPreview(String source) {
+    return FutureBuilder<String?>(
+      future: _resolveAttachmentDownloadUrl(source),
+      builder: (context, snapshot) {
+        if (snapshot.connectionState == ConnectionState.waiting) {
+          return SizedBox(
+            width: 220,
+            height: 140,
+            child: Center(
+              child: CircularProgressIndicator(
+                strokeWidth: 2,
+                color: Theme.of(context).colorScheme.primary,
+              ),
+            ),
+          );
+        }
+        final resolvedUrl = snapshot.data;
+        if (resolvedUrl == null || resolvedUrl.isEmpty) {
+          return _buildAttachmentErrorTile(
+            icon: Icons.broken_image_outlined,
+            message: _tr(
+              en: 'Image preview is unavailable',
+              ar: 'معاينة الصورة غير متاحة',
+            ),
+          );
+        }
+        return GestureDetector(
+          onTap: () => _showImagePreview(source),
+          child: ClipRRect(
+            borderRadius: BorderRadius.circular(10),
+            child: Image.network(
+              resolvedUrl,
+              width: 220,
+              height: 140,
+              fit: BoxFit.cover,
+              errorBuilder: (context, error, stackTrace) {
+                return _buildAttachmentErrorTile(
+                  icon: Icons.broken_image_outlined,
+                  message: _tr(
+                    en: 'Image preview is unavailable',
+                    ar: 'معاينة الصورة غير متاحة',
+                  ),
+                );
+              },
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  Future<void> _openAttachmentUrl(String source) async {
+    final resolvedUrl = await _resolveAttachmentDownloadUrl(source);
+    if (resolvedUrl == null || resolvedUrl.isEmpty) {
+      _showSnack(
+        _tr(en: 'Attachment link is invalid', ar: 'رابط الملف غير صالح'),
+      );
+      return;
+    }
+    final uri = Uri.tryParse(resolvedUrl.trim());
+    if (uri == null || !uri.hasScheme) {
+      _showSnack(
+        _tr(en: 'Attachment link is invalid', ar: 'رابط الملف غير صالح'),
+      );
       return;
     }
     try {
@@ -2482,14 +3221,24 @@ class _ChatPageState extends State<ChatPage> {
         mode: LaunchMode.externalApplication,
       );
       if (!launched) {
-        _showSnack('Unable to open attachment');
+        _showSnack(_tr(en: 'Unable to open attachment', ar: 'تعذر فتح الملف'));
       }
     } catch (_) {
-      _showSnack('Unable to open attachment');
+      _showSnack(_tr(en: 'Unable to open attachment', ar: 'تعذر فتح الملف'));
     }
   }
 
-  Future<void> _showImagePreview(String rawUrl) async {
+  Future<void> _showImagePreview(String source) async {
+    final resolvedUrl = await _resolveAttachmentDownloadUrl(source);
+    if (resolvedUrl == null || resolvedUrl.isEmpty) {
+      _showSnack(
+        _tr(en: 'Image preview is unavailable', ar: 'معاينة الصورة غير متاحة'),
+      );
+      return;
+    }
+    if (!mounted) {
+      return;
+    }
     await showDialog<void>(
       context: context,
       builder: (context) => Dialog(
@@ -2498,18 +3247,102 @@ class _ChatPageState extends State<ChatPage> {
           minScale: 0.8,
           maxScale: 4,
           child: Image.network(
-            rawUrl,
+            resolvedUrl,
             fit: BoxFit.contain,
             errorBuilder: (context, error, stackTrace) {
               return _buildAttachmentErrorTile(
                 icon: Icons.broken_image_outlined,
-                message: 'Image preview is unavailable',
+                message: _tr(
+                  en: 'Image preview is unavailable',
+                  ar: 'معاينة الصورة غير متاحة',
+                ),
               );
             },
           ),
         ),
       ),
     );
+  }
+
+  Future<String?> _resolveAttachmentDownloadUrl(String source) {
+    final normalized = source.trim();
+    if (normalized.isEmpty) {
+      return Future<String?>.value(null);
+    }
+    return _resolvedAttachmentUrlCache.putIfAbsent(
+      normalized,
+      () => _resolveAttachmentDownloadUrlInternal(normalized),
+    );
+  }
+
+  Future<String?> _resolveAttachmentDownloadUrlInternal(String source) async {
+    final uri = Uri.tryParse(source);
+    if (uri != null &&
+        (uri.scheme == 'http' || uri.scheme == 'https') &&
+        uri.hasAuthority) {
+      return source;
+    }
+
+    if (uri != null && uri.scheme == 'gs') {
+      final direct = await _resolveGsDownloadUrl(source);
+      if (direct != null) {
+        return direct;
+      }
+    }
+
+    final normalizedPath = source.replaceAll('\\', '/').replaceFirst('/', '');
+    if (normalizedPath.isNotEmpty) {
+      for (final storage in _storageCandidates()) {
+        try {
+          return await storage.ref().child(normalizedPath).getDownloadURL();
+        } catch (_) {
+          // Try the next configured bucket.
+        }
+      }
+    }
+
+    return null;
+  }
+
+  Future<String?> _resolveGsDownloadUrl(String source) async {
+    try {
+      return await FirebaseStorage.instance.refFromURL(source).getDownloadURL();
+    } catch (_) {
+      final swapped = _swapBucketSuffix(source);
+      if (swapped == null) {
+        return null;
+      }
+      try {
+        return await FirebaseStorage.instance
+            .refFromURL(swapped)
+            .getDownloadURL();
+      } catch (_) {
+        return null;
+      }
+    }
+  }
+
+  String? _swapBucketSuffix(String gsUrl) {
+    final uri = Uri.tryParse(gsUrl);
+    if (uri == null || uri.scheme != 'gs' || uri.host.isEmpty) {
+      return null;
+    }
+    final bucket = uri.host;
+    if (bucket.endsWith('.firebasestorage.app')) {
+      final swappedBucket = bucket.replaceFirst(
+        '.firebasestorage.app',
+        '.appspot.com',
+      );
+      return 'gs://$swappedBucket${uri.path}';
+    }
+    if (bucket.endsWith('.appspot.com')) {
+      final swappedBucket = bucket.replaceFirst(
+        '.appspot.com',
+        '.firebasestorage.app',
+      );
+      return 'gs://$swappedBucket${uri.path}';
+    }
+    return null;
   }
 
   Widget _buildAttachmentErrorTile({
@@ -2539,7 +3372,11 @@ class _ChatPageState extends State<ChatPage> {
     ChatMessageView message,
     Map<String, Object?>? payload,
   ) {
-    final hasUrl = (payload?['url']?.toString().trim().isNotEmpty ?? false);
+    final source = _resolveAttachmentSource(
+      payload,
+      fallbackText: message.text,
+    );
+    final hasUrl = source != null && source.isNotEmpty;
     final isActive = _activeVoiceMessageId == message.id;
     final duration = isActive && _activeVoiceDuration > Duration.zero
         ? _activeVoiceDuration
@@ -2568,10 +3405,14 @@ class _ChatPageState extends State<ChatPage> {
                       ? Icons.pause_circle_outline
                       : Icons.play_circle_outline,
                 ),
-                tooltip: isActive && _isVoicePlaying ? 'Pause' : 'Play',
+                tooltip: isActive && _isVoicePlaying
+                    ? _tr(en: 'Pause', ar: 'إيقاف مؤقت')
+                    : _tr(en: 'Play', ar: 'تشغيل'),
               ),
               const SizedBox(width: 2),
-              const Expanded(child: Text('Voice note')),
+              Expanded(
+                child: Text(_tr(en: 'Voice note', ar: 'رسالة صوتية')),
+              ),
             ],
           ),
           Slider(
@@ -2613,7 +3454,10 @@ class _ChatPageState extends State<ChatPage> {
             Padding(
               padding: const EdgeInsets.only(top: 4),
               child: Text(
-                'Audio file is unavailable in this environment',
+                _tr(
+                  en: 'Audio file is unavailable in this environment',
+                  ar: 'ملف الصوت غير متاح في هذه البيئة',
+                ),
                 style: Theme.of(context).textTheme.bodySmall,
               ),
             ),
@@ -2712,7 +3556,10 @@ class _ChatPageState extends State<ChatPage> {
   }
 
   String _defaultConversationTitle() {
-    return 'Conversation ${_shortId(widget.conversationId)}';
+    return _tr(
+      en: 'Conversation ${_shortId(widget.conversationId)}',
+      ar: 'محادثة ${_shortId(widget.conversationId)}',
+    );
   }
 
   String _conversationLabel(Conversation conversation) {
@@ -2721,8 +3568,14 @@ class _ChatPageState extends State<ChatPage> {
       return title;
     }
     return conversation.type == ConversationType.group
-        ? 'Group ${_shortId(conversation.id)}'
-        : 'Direct chat ${_shortId(conversation.id)}';
+        ? _tr(
+            en: 'Group ${_shortId(conversation.id)}',
+            ar: 'مجموعة ${_shortId(conversation.id)}',
+          )
+        : _tr(
+            en: 'Direct chat ${_shortId(conversation.id)}',
+            ar: 'دردشة مباشرة ${_shortId(conversation.id)}',
+          );
   }
 
   bool _isArabicUi() {
@@ -2732,7 +3585,11 @@ class _ChatPageState extends State<ChatPage> {
   }
 
   String _localizedInfoLabel() {
-    return _isArabicUi() ? 'معلومات الرسالة' : 'Info';
+    return _tr(en: 'Info', ar: 'معلومات الرسالة');
+  }
+
+  String _tr({required String en, required String ar}) {
+    return _isArabicUi() ? ar : en;
   }
 
   void _showSnack(String message) {
@@ -2817,6 +3674,20 @@ class _ChatPageState extends State<ChatPage> {
       return null;
     }
   }
+}
+
+class _AttachmentItem {
+  const _AttachmentItem({
+    required this.title,
+    required this.source,
+    required this.messageType,
+    required this.meta,
+  });
+
+  final String title;
+  final String source;
+  final MessageType messageType;
+  final String meta;
 }
 
 enum _MessageAction {

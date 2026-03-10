@@ -145,21 +145,17 @@ Verify token must match `WHATSAPP_VERIFY_TOKEN`.
 6. Enter phone numbers in E.164 format (example: `+2010XXXXXXXX`).
 7. After successful OTP verification, the app now auto-creates/updates `users/{uid}` in Firestore.
 
-## Latest Bug Fixes (v1.0.2+3)
+## Latest Bug Fixes (v1.0.3+4)
 
-- Fixed overflow in message long-press actions on small screens by making the bottom sheet scrollable.
-- Fixed auth screen keyboard overflow using a keyboard-aware `SingleChildScrollView`.
-- Hardened privacy settings loading against Firestore permission errors and added rules support for `users/{uid}/privacy/*`.
-- Direct-chat titles now resolve peer display names in both chat header and chat list, with live profile update propagation.
-- Message info is now available to the sender only, and the info dialog supports Arabic labels/content when UI language is Arabic.
-- Profile edits now reflect immediately without requiring sign-out/sign-in.
-- Improved reaction picker reliability using stable Unicode emoji values.
-- Improved media/document experience:
-  - Image thumbnail rendering with full-screen preview dialog
-  - Open document/video links externally
-  - Copy attachment link action
-- Improved attachment upload reliability with storage-bucket fallback attempts and a non-resumable retry path for small file uploads.
-- Added `url_launcher` dependency for opening attachment URLs.
+- Fixed Arabic localization for the chat overflow menu and message long-press actions.
+- Fixed group menu behavior by hiding `Create group with this contact` for existing groups and showing `Group info` instead of `View contact`.
+- Added a full group info sheet with creation date, participants list, and media/docs/links counters.
+- Fixed media/docs browsing to show real entries and support open/copy actions (image preview, video/document links, URL copy).
+- Improved attachment parsing compatibility for legacy message payloads (`downloadUrl`, `fileUrl`, `mediaUrl`, `attachmentUrl`, `storagePath`, `objectPath`, nested `file`/`media`, and more).
+- Added fallback support for old attachment messages stored as plain text pointers (`https://`, `gs://`, or storage paths) when JSON payload is missing.
+- Improved old voice-note playback compatibility by reusing the legacy attachment fallback path and broader duration-key parsing.
+- Improved upload reliability by normalizing Firebase Storage bucket candidates and preferring explicit `.appspot.com` fallback for projects configured with `.firebasestorage.app`.
+- Enabled Android `android:enableOnBackInvokedCallback="true"` to resolve back-invocation warnings on modern Android versions.
 
 ### Firebase setup required for media uploads
 
