@@ -29,8 +29,14 @@ const bool _enableCrashlyticsInDebug = bool.fromEnvironment(
   'CRASHLYTICS_IN_DEBUG',
   defaultValue: false,
 );
-const String _supabaseUrl = String.fromEnvironment('SUPABASE_URL');
-const String _supabaseAnonKey = String.fromEnvironment('SUPABASE_ANON_KEY');
+const String _supabaseUrl = String.fromEnvironment(
+  'SUPABASE_URL',
+  defaultValue: 'https://uhovvyhmfqogjrayqigl.supabase.co',
+);
+const String _supabaseAnonKey = String.fromEnvironment(
+  'SUPABASE_ANON_KEY',
+  defaultValue: 'sb_publishable_qW4G6ek9jzbPtw1Fe3e8TQ_9IhYLBwy',
+);
 const String _supabaseStorageBucket = String.fromEnvironment(
   'SUPABASE_STORAGE_BUCKET',
   defaultValue: 'chat-media',

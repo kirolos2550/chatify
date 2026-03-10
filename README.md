@@ -121,7 +121,7 @@ Verify token must match `WHATSAPP_VERIFY_TOKEN`.
 ## Android Release Build (APK)
 
 1. Build production flavor release APK:
-   - `flutter build apk --release`
+   - `flutter build apk --release --dart-define-from-file=supabase.env.json`
 2. Output path:
    - `build/app/outputs/flutter-apk/app-prod-release.apk`
 3. Install on a real Android phone (USB debugging enabled):
@@ -182,6 +182,8 @@ Verify token must match `WHATSAPP_VERIFY_TOKEN`.
   - `INSERT` into `storage.objects`
   - `UPDATE` in `storage.objects` (required because uploads use upsert)
 - Firebase Storage upload fallback is disabled by default in current builds.
+- Enable Firebase fallback only when intentionally needed:
+  - `--dart-define=ENABLE_FIREBASE_STORAGE_UPLOAD_FALLBACK=true`
 
 ## Crashlytics
 

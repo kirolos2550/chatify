@@ -39,8 +39,14 @@ import 'package:uuid/uuid.dart';
 
 final InMemoryMessageRepository _fallbackMessageRepository =
     InMemoryMessageRepository();
-const String _supabaseUrl = String.fromEnvironment('SUPABASE_URL');
-const String _supabaseAnonKey = String.fromEnvironment('SUPABASE_ANON_KEY');
+const String _supabaseUrl = String.fromEnvironment(
+  'SUPABASE_URL',
+  defaultValue: 'https://uhovvyhmfqogjrayqigl.supabase.co',
+);
+const String _supabaseAnonKey = String.fromEnvironment(
+  'SUPABASE_ANON_KEY',
+  defaultValue: 'sb_publishable_qW4G6ek9jzbPtw1Fe3e8TQ_9IhYLBwy',
+);
 const String _supabaseStorageBucket = String.fromEnvironment(
   'SUPABASE_STORAGE_BUCKET',
   defaultValue: 'chat-media',
@@ -2455,6 +2461,7 @@ class _ChatPageState extends State<ChatPage> {
     List<int>? bytes,
     String? filePath,
   }) async {
+    String? supabaseFailureReason;
     if (_isSupabaseStorageConfigured) {
       final supabaseUrl = await _uploadToSupabasePath(
         storagePath: storagePath,
@@ -2465,17 +2472,28 @@ class _ChatPageState extends State<ChatPage> {
       if (supabaseUrl != null && supabaseUrl.isNotEmpty) {
         return supabaseUrl;
       }
-      return null;
-    }
-
-    if (!_enableFirebaseStorageUploadFallback) {
+      supabaseFailureReason = _lastUploadFailureReason;
+      if (!_enableFirebaseStorageUploadFallback) {
+        return null;
+      }
+      AppLogger.warning(
+        'Supabase upload failed. Falling back to Firebase Storage.',
+        event: 'chat.media.upload.supabase_fallback',
+        action: 'chat.media.upload',
+        metadata: <String, Object?>{
+          'path': storagePath,
+          'reason': supabaseFailureReason,
+        },
+      );
+    } else if (!_enableFirebaseStorageUploadFallback) {
       _lastUploadFailureReason =
           'Supabase is not configured for this run. Start with --dart-define-from-file=supabase.env.json';
       return null;
     }
 
     if (Firebase.apps.isEmpty) {
-      _lastUploadFailureReason = 'No media storage provider is configured.';
+      _lastUploadFailureReason =
+          supabaseFailureReason ?? 'No media storage provider is configured.';
       return null;
     }
 
@@ -2530,6 +2548,10 @@ class _ChatPageState extends State<ChatPage> {
           'Upload failed with Firebase error: ${lastFirebaseError.code}';
     } else if (lastError != null) {
       _lastUploadFailureReason = 'Upload failed: $lastError';
+    }
+    if (supabaseFailureReason != null && _lastUploadFailureReason != null) {
+      _lastUploadFailureReason =
+          '$supabaseFailureReason Firebase fallback failed: ${_lastUploadFailureReason!}';
     }
     return null;
   }
@@ -2864,6 +2886,9 @@ class _ChatPageState extends State<ChatPage> {
       case MessageType.file:
         return 'application/octet-stream';
       case MessageType.voice:
+        if (extension?.toLowerCase() == 'm4a') {
+          return 'audio/mp4';
+        }
         return 'audio/aac';
       default:
         return 'text/plain';
