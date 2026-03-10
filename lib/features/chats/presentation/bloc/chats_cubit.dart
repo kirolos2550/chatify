@@ -34,13 +34,8 @@ class ChatsState {
 class ChatsCubit extends Cubit<ChatsState> {
   ChatsCubit(this._repository) : super(const ChatsState()) {
     _subscription = _repository.watchConversations().listen(
-      (items) => emit(
-        state.copyWith(
-          items: items,
-          loading: false,
-          clearError: true,
-        ),
-      ),
+      (items) =>
+          emit(state.copyWith(items: items, loading: false, clearError: true)),
       onError: (Object error, StackTrace stackTrace) {
         emit(
           state.copyWith(

@@ -9,11 +9,15 @@ import 'package:chatify/features/profile/presentation/pages/user_profile_page.da
 import 'package:chatify/features/search/presentation/pages/search_page.dart';
 import 'package:chatify/features/settings/presentation/pages/settings_page.dart';
 import 'package:chatify/features/status/presentation/pages/status_page.dart';
+import 'package:chatify/core/common/app_logger.dart';
 import 'package:chatify/l10n/app_localizations.dart';
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 
 abstract final class AppRouter {
+  static bool _routeTracingEnabled = false;
+  static String? _lastKnownRoute;
+
   static final GoRouter router = GoRouter(
     initialLocation: '/auth',
     routes: [
@@ -79,6 +83,43 @@ abstract final class AppRouter {
       GoRoute(path: '/backup', builder: (context, state) => const BackupPage()),
     ],
   );
+
+  static void enableRouteTracing() {
+    if (_routeTracingEnabled) {
+      return;
+    }
+    _routeTracingEnabled = true;
+    router.routerDelegate.addListener(_handleRouterChange);
+    _handleRouterChange();
+  }
+
+  static void _handleRouterChange() {
+    final currentRoute = router.state.uri.toString();
+    if (_lastKnownRoute == null) {
+      _lastKnownRoute = currentRoute;
+      AppLogger.setCurrentRoute(currentRoute);
+      AppLogger.breadcrumb(
+        'route.initial',
+        action: 'navigation',
+        route: currentRoute,
+      );
+      return;
+    }
+
+    if (_lastKnownRoute == currentRoute) {
+      return;
+    }
+
+    final from = _lastKnownRoute;
+    _lastKnownRoute = currentRoute;
+    AppLogger.setCurrentRoute(currentRoute);
+    AppLogger.breadcrumb(
+      'route.transition',
+      action: 'navigation',
+      route: currentRoute,
+      metadata: <String, Object?>{'from': from, 'to': currentRoute},
+    );
+  }
 }
 
 class _HomeShell extends StatelessWidget {

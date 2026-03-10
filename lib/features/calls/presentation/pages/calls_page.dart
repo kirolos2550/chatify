@@ -1,4 +1,5 @@
 import 'package:chatify/app/di/injection.dart';
+import 'package:chatify/core/common/app_logger.dart';
 import 'package:chatify/core/domain/enums/chat_enums.dart';
 import 'package:chatify/features/calls/presentation/bloc/calls_cubit.dart';
 import 'package:firebase_core/firebase_core.dart';
@@ -51,6 +52,11 @@ class _CallsPageState extends State<CallsPage> {
       child: BlocConsumer<CallsCubit, CallsState>(
         listener: (context, state) {
           if (state.errorMessage != null) {
+            AppLogger.breadcrumb(
+              'calls.ui.error_shown',
+              action: 'ui.snackbar',
+              metadata: <String, Object?>{'message': state.errorMessage},
+            );
             ScaffoldMessenger.of(
               context,
             ).showSnackBar(SnackBar(content: Text(state.errorMessage!)));

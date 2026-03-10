@@ -3,7 +3,8 @@
 Production-oriented Flutter messaging foundation aligned with:
 - Clean Architecture (Presentation / Domain / Data)
 - Feature-first module boundaries
-- Firebase stack (Auth, Firestore, Storage, Functions, FCM, Crashlytics)
+- Firebase stack (Auth, Firestore, Functions, FCM, Crashlytics)
+- Supabase Storage media pipeline (attachments + voice notes)
 - Drift offline-first storage
 - Bloc/Cubit state management
 - DI using get_it + injectable
@@ -105,11 +106,17 @@ Verify token must match `WHATSAPP_VERIFY_TOKEN`.
    - `ios/Runner/GoogleService-Info.plist`
 3. Get dependencies:
    - `flutter pub get`
-4. Run code generation:
+4. Add Supabase runtime defines file for media uploads:
+   - Create `supabase.env.json` in project root:
+   - `{"SUPABASE_URL":"https://<project>.supabase.co","SUPABASE_ANON_KEY":"<publishable-key>","SUPABASE_STORAGE_BUCKET":"chat-media"}`
+5. Ensure bucket and policies exist in Supabase Storage:
+   - Bucket name should match `SUPABASE_STORAGE_BUCKET`.
+   - Allow `insert`, `update`, and `select` for your client role (for debug/dev, `anon` is common).
+6. Run code generation:
    - `dart run build_runner build --delete-conflicting-outputs`
-5. Launch app:
-   - `flutter run -t lib/main.dart`
-6. For quick end-to-end smoke, use **Continue in demo mode** from the auth screen.
+7. Launch app:
+   - `flutter run -t lib/main.dart --dart-define-from-file=supabase.env.json`
+8. For quick end-to-end smoke, use **Continue in demo mode** from the auth screen.
 
 ## Android Release Build (APK)
 
@@ -145,7 +152,13 @@ Verify token must match `WHATSAPP_VERIFY_TOKEN`.
 6. Enter phone numbers in E.164 format (example: `+2010XXXXXXXX`).
 7. After successful OTP verification, the app now auto-creates/updates `users/{uid}` in Firestore.
 
-## Latest Bug Fixes (v1.0.3+4)
+## Latest Bug Fixes (v1.0.4+5)
+
+- Moved chat media uploads (images/files/voice notes) to Supabase Storage as primary provider.
+- Added runtime configuration for media storage via `SUPABASE_URL`, `SUPABASE_ANON_KEY`, and `SUPABASE_STORAGE_BUCKET`.
+- Added clear user-facing diagnostics for common Supabase failures (missing bucket, blocked storage policy, missing runtime defines).
+- Added VS Code and debug script support for `--dart-define-from-file=supabase.env.json` to avoid misconfigured runs.
+- Hardened debug file log sink to avoid app crashes on write/flush stream-state errors (`StreamSink is bound to a stream`).
 
 - Fixed Arabic localization for the chat overflow menu and message long-press actions.
 - Fixed group menu behavior by hiding `Create group with this contact` for existing groups and showing `Group info` instead of `View contact`.
@@ -157,13 +170,18 @@ Verify token must match `WHATSAPP_VERIFY_TOKEN`.
 - Improved upload reliability by normalizing Firebase Storage bucket candidates and preferring explicit `.appspot.com` fallback for projects configured with `.firebasestorage.app`.
 - Enabled Android `android:enableOnBackInvokedCallback="true"` to resolve back-invocation warnings on modern Android versions.
 
-### Firebase setup required for media uploads
+### Supabase setup required for media uploads
 
-- Firebase Storage must be initialized in Firebase Console for project `chatify-3d844`.
-- If Storage is not initialized, uploads can fail with errors like `StorageException ... 404`.
-- After enabling Storage, deploy rules:
-  - `firebase deploy --only firestore:rules --project chatify-3d844`
-  - `firebase deploy --only storage --project chatify-3d844`
+- Create a Supabase Storage bucket (default expected name: `chat-media`).
+- Ensure the app runs with:
+  - `--dart-define-from-file=supabase.env.json`
+- Example `supabase.env.json` content:
+  - `{"SUPABASE_URL":"https://<project>.supabase.co","SUPABASE_ANON_KEY":"<publishable-key>","SUPABASE_STORAGE_BUCKET":"chat-media"}`
+- Configure policies to allow your client role (e.g. `anon` in debug/dev) to:
+  - `SELECT` from `storage.objects`
+  - `INSERT` into `storage.objects`
+  - `UPDATE` in `storage.objects` (required because uploads use upsert)
+- Firebase Storage upload fallback is disabled by default in current builds.
 
 ## Crashlytics
 

@@ -1,3 +1,4 @@
+import 'package:chatify/core/common/app_logger.dart';
 import 'package:chatify/core/network/firebase_paths.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
@@ -59,10 +60,30 @@ class UserPrivacyService {
           fallback: true,
         ),
       );
-    } on FirebaseException {
+    } on FirebaseException catch (error, stackTrace) {
+      AppLogger.error(
+        'Failed to load user privacy settings from Firebase',
+        error,
+        stackTrace,
+        event: 'privacy.load.failure',
+        source: 'UserPrivacyService',
+        operation: 'loadForUid',
+        action: 'settings.privacy.load',
+        metadata: <String, Object?>{'uid': uid},
+      );
       // If rules block this document, keep app behavior stable using defaults.
       return defaults();
-    } catch (_) {
+    } catch (error, stackTrace) {
+      AppLogger.error(
+        'Unexpected failure while loading privacy settings',
+        error,
+        stackTrace,
+        event: 'privacy.load.exception',
+        source: 'UserPrivacyService',
+        operation: 'loadForUid',
+        action: 'settings.privacy.load',
+        metadata: <String, Object?>{'uid': uid},
+      );
       return defaults();
     }
   }
@@ -88,16 +109,52 @@ class UserPrivacyService {
     if (typingVisibilityEnabled != null) {
       payload['typingVisibilityEnabled'] = typingVisibilityEnabled;
     }
-    await _settingsDoc(uid).set(payload, SetOptions(merge: true));
+    try {
+      await _settingsDoc(uid).set(payload, SetOptions(merge: true));
 
-    if (lastSeenVisible != null) {
-      await FirebaseFirestore.instance
-          .collection(FirebasePaths.presence)
-          .doc(uid)
-          .set({
-            'showLastSeen': lastSeenVisible,
-            'updatedAt': FieldValue.serverTimestamp(),
-          }, SetOptions(merge: true));
+      if (lastSeenVisible != null) {
+        await FirebaseFirestore.instance
+            .collection(FirebasePaths.presence)
+            .doc(uid)
+            .set({
+              'showLastSeen': lastSeenVisible,
+              'updatedAt': FieldValue.serverTimestamp(),
+            }, SetOptions(merge: true));
+      }
+    } on FirebaseException catch (error, stackTrace) {
+      AppLogger.error(
+        'Failed to update user privacy settings in Firebase',
+        error,
+        stackTrace,
+        event: 'privacy.update.failure',
+        source: 'UserPrivacyService',
+        operation: 'updateMySettings',
+        action: 'settings.privacy.update',
+        metadata: <String, Object?>{
+          'uid': uid,
+          'readReceiptsEnabled': readReceiptsEnabled,
+          'lastSeenVisible': lastSeenVisible,
+          'typingVisibilityEnabled': typingVisibilityEnabled,
+        },
+      );
+      rethrow;
+    } catch (error, stackTrace) {
+      AppLogger.error(
+        'Unexpected failure while updating privacy settings',
+        error,
+        stackTrace,
+        event: 'privacy.update.exception',
+        source: 'UserPrivacyService',
+        operation: 'updateMySettings',
+        action: 'settings.privacy.update',
+        metadata: <String, Object?>{
+          'uid': uid,
+          'readReceiptsEnabled': readReceiptsEnabled,
+          'lastSeenVisible': lastSeenVisible,
+          'typingVisibilityEnabled': typingVisibilityEnabled,
+        },
+      );
+      rethrow;
     }
   }
 

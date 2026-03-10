@@ -1,5 +1,8 @@
 import 'package:chatify/app/di/injection.dart';
 import 'package:chatify/app/localization/app_locale_controller.dart';
+import 'package:chatify/core/common/app_logger.dart';
+import 'package:chatify/core/common/log_share_service.dart';
+import 'package:chatify/core/common/result.dart';
 import 'package:chatify/core/data/services/user_privacy_service.dart';
 import 'package:chatify/core/domain/repositories/auth_repository.dart';
 import 'package:chatify/l10n/app_localizations.dart';
@@ -20,6 +23,7 @@ class _SettingsPageState extends State<SettingsPage> {
   bool _lastSeenVisible = true;
   bool _typingVisibilityEnabled = true;
   bool _privacyUpdating = false;
+  bool _sharingLogs = false;
 
   bool get _hasAuthRepository =>
       getIt.isRegistered<AuthRepository>() && Firebase.apps.isNotEmpty;
@@ -60,6 +64,8 @@ class _SettingsPageState extends State<SettingsPage> {
       currentLanguageCode: AppLocaleController.instance.localeCode,
       onChangeLanguage: _changeLanguage,
       onOpenProfile: _openMyProfile,
+      sharingLogs: _sharingLogs,
+      onExportLogs: _exportDebugLogs,
       onSignOut: _signOut,
     );
   }
@@ -68,6 +74,10 @@ class _SettingsPageState extends State<SettingsPage> {
     if (Firebase.apps.isEmpty || FirebaseAuth.instance.currentUser == null) {
       return;
     }
+    AppLogger.breadcrumb(
+      'settings.privacy.load.start',
+      action: 'settings.privacy.load',
+    );
     setState(() => _privacyUpdating = true);
     try {
       final settings = await UserPrivacyService.loadMySettings();
@@ -79,7 +89,21 @@ class _SettingsPageState extends State<SettingsPage> {
         _lastSeenVisible = settings.lastSeenVisible;
         _typingVisibilityEnabled = settings.typingVisibilityEnabled;
       });
+      AppLogger.info(
+        'Privacy settings loaded',
+        event: 'settings.privacy.load.success',
+        action: 'settings.privacy.load',
+      );
     } catch (error) {
+      AppLogger.error(
+        'Failed to load privacy settings',
+        error,
+        StackTrace.current,
+        event: 'settings.privacy.load.failure',
+        action: 'settings.privacy.load',
+        source: 'SettingsPage',
+        operation: 'loadPrivacySettings',
+      );
       if (!mounted) {
         return;
       }
@@ -100,6 +124,15 @@ class _SettingsPageState extends State<SettingsPage> {
       _showSnack('Sign in first to change privacy settings');
       return;
     }
+    AppLogger.breadcrumb(
+      'settings.privacy.update.start',
+      action: 'settings.privacy.update',
+      metadata: <String, Object?>{
+        'readReceiptsEnabled': readReceiptsEnabled,
+        'lastSeenVisible': lastSeenVisible,
+        'typingVisibilityEnabled': typingVisibilityEnabled,
+      },
+    );
     setState(() {
       if (readReceiptsEnabled != null) {
         _readReceiptsEnabled = readReceiptsEnabled;
@@ -119,7 +152,31 @@ class _SettingsPageState extends State<SettingsPage> {
         lastSeenVisible: lastSeenVisible,
         typingVisibilityEnabled: typingVisibilityEnabled,
       );
+      AppLogger.info(
+        'Privacy settings updated',
+        event: 'settings.privacy.update.success',
+        action: 'settings.privacy.update',
+        metadata: <String, Object?>{
+          'readReceiptsEnabled': readReceiptsEnabled,
+          'lastSeenVisible': lastSeenVisible,
+          'typingVisibilityEnabled': typingVisibilityEnabled,
+        },
+      );
     } catch (error) {
+      AppLogger.error(
+        'Failed to update privacy settings',
+        error,
+        StackTrace.current,
+        event: 'settings.privacy.update.failure',
+        action: 'settings.privacy.update',
+        source: 'SettingsPage',
+        operation: 'updatePrivacy',
+        metadata: <String, Object?>{
+          'readReceiptsEnabled': readReceiptsEnabled,
+          'lastSeenVisible': lastSeenVisible,
+          'typingVisibilityEnabled': typingVisibilityEnabled,
+        },
+      );
       if (!mounted) {
         return;
       }
@@ -198,13 +255,42 @@ class _SettingsPageState extends State<SettingsPage> {
   }
 
   Future<void> _signOut() async {
+    AppLogger.breadcrumb(
+      'settings.sign_out.start',
+      action: 'settings.sign_out',
+    );
     if (_hasAuthRepository) {
-      await getIt<AuthRepository>().signOut();
+      final result = await getIt<AuthRepository>().signOut();
+      result.logIfFailure(
+        event: 'settings.sign_out.failure',
+        action: 'settings.sign_out',
+        source: 'SettingsPage',
+        operation: 'signOut',
+      );
+      if (result.error == null) {
+        AppLogger.info(
+          'Sign out succeeded',
+          event: 'settings.sign_out.success',
+          action: 'settings.sign_out',
+        );
+      }
     }
     if (!mounted) {
       return;
     }
     context.go('/auth');
+  }
+
+  Future<void> _exportDebugLogs() async {
+    if (_sharingLogs) {
+      return;
+    }
+    setState(() => _sharingLogs = true);
+    final result = await shareLatestDebugLogs(action: 'settings.logs.share');
+    if (mounted) {
+      _showSnack(result.message);
+      setState(() => _sharingLogs = false);
+    }
   }
 
   void _showSnack(String message) {
@@ -232,6 +318,8 @@ class _SettingsScaffold extends StatelessWidget {
     required this.currentLanguageCode,
     required this.onChangeLanguage,
     required this.onOpenProfile,
+    required this.sharingLogs,
+    required this.onExportLogs,
     required this.onSignOut,
   });
 
@@ -248,6 +336,8 @@ class _SettingsScaffold extends StatelessWidget {
   final String currentLanguageCode;
   final Future<void> Function() onChangeLanguage;
   final Future<void> Function() onOpenProfile;
+  final bool sharingLogs;
+  final Future<void> Function() onExportLogs;
   final Future<void> Function() onSignOut;
 
   @override
@@ -307,6 +397,18 @@ class _SettingsScaffold extends StatelessWidget {
             leading: const Icon(Icons.backup_outlined),
             title: Text(l10n.encryptedBackup),
             onTap: () => context.push('/backup'),
+          ),
+          ListTile(
+            leading: sharingLogs
+                ? const SizedBox(
+                    width: 20,
+                    height: 20,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  )
+                : const Icon(Icons.bug_report_outlined),
+            title: const Text('Export debug logs'),
+            subtitle: const Text('Share latest session logs for diagnostics'),
+            onTap: sharingLogs ? null : onExportLogs,
           ),
           ListTile(
             leading: const Icon(Icons.storefront_outlined),

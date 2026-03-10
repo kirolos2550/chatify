@@ -1,3 +1,4 @@
+import 'package:chatify/core/common/app_logger.dart';
 import 'package:chatify/core/common/failure.dart';
 
 sealed class Result<T> {
@@ -26,4 +27,45 @@ class FailureResult<T> extends Result<T> {
   const FailureResult(this.failure);
 
   final Failure failure;
+}
+
+extension ResultLoggingX<T> on Result<T> {
+  Result<T> onFailure(void Function(Failure failure) callback) {
+    final failure = error;
+    if (failure != null) {
+      callback(failure);
+    }
+    return this;
+  }
+
+  Result<T> logIfFailure({
+    required String event,
+    String? source,
+    String? operation,
+    String? action,
+    String? route,
+    Map<String, Object?>? metadata,
+  }) {
+    final failure = error;
+    if (failure == null) {
+      return this;
+    }
+
+    AppLogger.error(
+      failure.message,
+      failure.cause ?? failure,
+      failure.stackTrace,
+      event: event,
+      source: source ?? failure.source,
+      operation: operation ?? failure.operation,
+      action: action,
+      route: route,
+      metadata: <String, Object?>{
+        if (failure.code != null) 'failureCode': failure.code,
+        ...?failure.metadata,
+        ...?metadata,
+      },
+    );
+    return this;
+  }
 }

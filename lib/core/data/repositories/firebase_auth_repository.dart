@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:chatify/core/common/app_logger.dart';
 import 'package:chatify/core/common/failure.dart';
 import 'package:chatify/core/common/result.dart';
 import 'package:chatify/core/domain/entities/app_user.dart';
@@ -58,31 +59,42 @@ class FirebaseAuthRepository implements AuthRepository {
             }
           } on FirebaseAuthException catch (e) {
             if (!completer.isCompleted) {
+              final failure = _buildAndLogAuthFailure(
+                message: e.message ?? 'Auto OTP verification failed',
+                code: e.code,
+                operation: 'requestOtp.verificationCompleted',
+                cause: e,
+              );
+              completer.complete(FailureResult(failure));
+            }
+          } catch (e, stackTrace) {
+            if (!completer.isCompleted) {
               completer.complete(
                 FailureResult(
-                  Failure(e.message ?? 'Auto OTP verification failed'),
+                  _buildAndLogFailure(
+                    e,
+                    stackTrace: stackTrace,
+                    operation: 'requestOtp.verificationCompleted',
+                    message: 'Auto OTP verification failed',
+                  ),
                 ),
               );
-            }
-          } catch (e) {
-            if (!completer.isCompleted) {
-              completer.complete(FailureResult(Failure(e.toString())));
             }
           }
         },
         verificationFailed: (e) {
           if (!completer.isCompleted) {
-            completer.complete(
-              FailureResult(
-                Failure(
-                  _friendlyAuthMessage(
-                    code: e.code,
-                    message: e.message,
-                    fallback: 'OTP request failed',
-                  ),
-                ),
+            final failure = _buildAndLogAuthFailure(
+              message: _friendlyAuthMessage(
+                code: e.code,
+                message: e.message,
+                fallback: 'OTP request failed',
               ),
+              code: e.code,
+              operation: 'requestOtp.verificationFailed',
+              cause: e,
             );
+            completer.complete(FailureResult(failure));
           }
         },
         codeSent: (verificationId, _) async {
@@ -104,25 +116,34 @@ class FirebaseAuthRepository implements AuthRepository {
       );
       final result = await completer.future.timeout(
         const Duration(seconds: 75),
-        onTimeout: () => const FailureResult(
-          Failure(
-            'OTP request timed out. Check your network, and if you are in dev mode make sure Firebase Auth emulator is running or disable USE_FIREBASE_EMULATORS.',
+        onTimeout: () => FailureResult(
+          _buildAndLogFailure(
+            TimeoutException('requestOtp timeout after 75 seconds'),
+            operation: 'requestOtp.timeout',
+            message:
+                'OTP request timed out. Check your network, and if you are in dev mode make sure Firebase Auth emulator is running or disable USE_FIREBASE_EMULATORS.',
+            code: 'otp_timeout',
           ),
         ),
       );
       return result;
     } on FirebaseAuthException catch (e) {
       return FailureResult(
-        Failure(
-          _friendlyAuthMessage(
+        _buildAndLogAuthFailure(
+          message: _friendlyAuthMessage(
             code: e.code,
             message: e.message,
             fallback: 'OTP request failed',
           ),
+          code: e.code,
+          operation: 'requestOtp',
+          cause: e,
         ),
       );
-    } catch (e) {
-      return FailureResult(Failure(e.toString()));
+    } catch (e, stackTrace) {
+      return FailureResult(
+        _buildAndLogFailure(e, stackTrace: stackTrace, operation: 'requestOtp'),
+      );
     }
   }
 
@@ -144,16 +165,21 @@ class FirebaseAuthRepository implements AuthRepository {
       return const Success(null);
     } on FirebaseAuthException catch (e) {
       return FailureResult(
-        Failure(
-          _friendlyAuthMessage(
+        _buildAndLogAuthFailure(
+          message: _friendlyAuthMessage(
             code: e.code,
             message: e.message,
             fallback: 'OTP verification failed',
           ),
+          code: e.code,
+          operation: 'verifyOtp',
+          cause: e,
         ),
       );
-    } catch (e) {
-      return FailureResult(Failure(e.toString()));
+    } catch (e, stackTrace) {
+      return FailureResult(
+        _buildAndLogFailure(e, stackTrace: stackTrace, operation: 'verifyOtp'),
+      );
     }
   }
 
@@ -162,8 +188,14 @@ class FirebaseAuthRepository implements AuthRepository {
     try {
       await _secureStorage.write(key: _pinKey, value: pin);
       return const Success(null);
-    } catch (e) {
-      return FailureResult(Failure(e.toString()));
+    } catch (e, stackTrace) {
+      return FailureResult(
+        _buildAndLogFailure(
+          e,
+          stackTrace: stackTrace,
+          operation: 'setTwoStepPin',
+        ),
+      );
     }
   }
 
@@ -191,8 +223,14 @@ class FirebaseAuthRepository implements AuthRepository {
       );
       await user.reload();
       return const Success(null);
-    } catch (e) {
-      return FailureResult(Failure(e.toString()));
+    } catch (e, stackTrace) {
+      return FailureResult(
+        _buildAndLogFailure(
+          e,
+          stackTrace: stackTrace,
+          operation: 'updateProfile',
+        ),
+      );
     }
   }
 
@@ -201,8 +239,10 @@ class FirebaseAuthRepository implements AuthRepository {
     try {
       await _auth.signOut();
       return const Success(null);
-    } catch (e) {
-      return FailureResult(Failure(e.toString()));
+    } catch (e, stackTrace) {
+      return FailureResult(
+        _buildAndLogFailure(e, stackTrace: stackTrace, operation: 'signOut'),
+      );
     }
   }
 
@@ -249,6 +289,62 @@ class FirebaseAuthRepository implements AuthRepository {
       return 'User';
     }
     return candidate;
+  }
+
+  Failure _buildAndLogAuthFailure({
+    required String message,
+    required String? code,
+    required String operation,
+    required Object cause,
+    StackTrace? stackTrace,
+  }) {
+    final failure = Failure(
+      message,
+      code: code,
+      source: 'FirebaseAuthRepository',
+      operation: operation,
+      cause: cause,
+      stackTrace: stackTrace,
+    );
+    AppLogger.error(
+      failure.message,
+      failure.cause ?? cause,
+      failure.stackTrace,
+      event: 'auth.repository.failure',
+      source: failure.source,
+      operation: failure.operation,
+      action: 'auth.repository',
+      metadata: <String, Object?>{'failureCode': failure.code},
+    );
+    return failure;
+  }
+
+  Failure _buildAndLogFailure(
+    Object error, {
+    StackTrace? stackTrace,
+    required String operation,
+    String? message,
+    String? code,
+  }) {
+    final failure = Failure.fromException(
+      error,
+      stackTrace: stackTrace,
+      message: message,
+      code: code,
+      source: 'FirebaseAuthRepository',
+      operation: operation,
+    );
+    AppLogger.error(
+      failure.message,
+      failure.cause ?? error,
+      failure.stackTrace ?? stackTrace,
+      event: 'auth.repository.failure',
+      source: failure.source,
+      operation: failure.operation,
+      action: 'auth.repository',
+      metadata: <String, Object?>{'failureCode': failure.code},
+    );
+    return failure;
   }
 
   String _friendlyAuthMessage({

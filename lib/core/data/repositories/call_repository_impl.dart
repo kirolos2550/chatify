@@ -1,3 +1,4 @@
+import 'package:chatify/core/common/app_logger.dart';
 import 'package:chatify/core/common/failure.dart';
 import 'package:chatify/core/common/result.dart';
 import 'package:chatify/core/domain/entities/call_session.dart';
@@ -23,8 +24,15 @@ class CallRepositoryImpl implements CallRepository {
         'endedAt': FieldValue.serverTimestamp(),
       }, SetOptions(merge: true));
       return const Success(null);
-    } catch (e) {
-      return FailureResult(Failure(e.toString()));
+    } catch (e, stackTrace) {
+      return FailureResult(
+        _failureFrom(
+          e,
+          stackTrace: stackTrace,
+          operation: 'endCall',
+          metadata: <String, Object?>{'callId': callId},
+        ),
+      );
     }
   }
 
@@ -51,8 +59,18 @@ class CallRepositoryImpl implements CallRepository {
           startedAt: now,
         ),
       );
-    } catch (e) {
-      return FailureResult(Failure(e.toString()));
+    } catch (e, stackTrace) {
+      return FailureResult(
+        _failureFrom(
+          e,
+          stackTrace: stackTrace,
+          operation: 'startCall',
+          metadata: <String, Object?>{
+            'participantCount': participantIds.length,
+            'type': type.name,
+          },
+        ),
+      );
     }
   }
 
@@ -93,5 +111,31 @@ class CallRepositoryImpl implements CallRepository {
       return DateTime.fromMillisecondsSinceEpoch(value, isUtc: true);
     }
     return null;
+  }
+
+  Failure _failureFrom(
+    Object error, {
+    required String operation,
+    StackTrace? stackTrace,
+    Map<String, Object?>? metadata,
+  }) {
+    final failure = Failure.fromException(
+      error,
+      stackTrace: stackTrace,
+      source: 'CallRepositoryImpl',
+      operation: operation,
+      metadata: metadata,
+    );
+    AppLogger.error(
+      failure.message,
+      failure.cause ?? error,
+      failure.stackTrace ?? stackTrace,
+      event: 'calls.repository.failure',
+      source: failure.source,
+      operation: failure.operation,
+      action: 'calls.repository',
+      metadata: failure.metadata,
+    );
+    return failure;
   }
 }

@@ -34,16 +34,10 @@ class StatusState {
 class StatusCubit extends Cubit<StatusState> {
   StatusCubit(this._repository) : super(const StatusState()) {
     _subscription = _repository.watchStatusFeed().listen(
-      (items) => emit(
-        state.copyWith(items: items, loading: false, clearError: true),
-      ),
+      (items) =>
+          emit(state.copyWith(items: items, loading: false, clearError: true)),
       onError: (Object error, StackTrace stackTrace) {
-        emit(
-          state.copyWith(
-            loading: false,
-            errorMessage: error.toString(),
-          ),
-        );
+        emit(state.copyWith(loading: false, errorMessage: error.toString()));
       },
     );
   }

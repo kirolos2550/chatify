@@ -1,4 +1,5 @@
 import 'package:chatify/app/di/injection.dart';
+import 'package:chatify/core/common/app_logger.dart';
 import 'package:chatify/features/auth/presentation/bloc/auth_cubit.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_core/firebase_core.dart';
@@ -76,6 +77,11 @@ class _AuthPageState extends State<AuthPage> {
             return;
           }
           if (state.status == AuthStatus.error && state.errorMessage != null) {
+            AppLogger.breadcrumb(
+              'auth.ui.error_shown',
+              action: 'ui.snackbar',
+              metadata: <String, Object?>{'message': state.errorMessage},
+            );
             ScaffoldMessenger.of(
               context,
             ).showSnackBar(SnackBar(content: Text(state.errorMessage!)));

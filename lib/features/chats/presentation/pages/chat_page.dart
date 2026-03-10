@@ -4,6 +4,8 @@ import 'dart:convert';
 import 'dart:math' as math;
 
 import 'package:chatify/app/di/injection.dart';
+import 'package:chatify/core/common/app_logger.dart';
+import 'package:chatify/core/common/log_share_service.dart';
 import 'package:chatify/core/common/result.dart';
 import 'package:chatify/core/data/repositories/in_memory_message_repository.dart';
 import 'package:chatify/core/data/services/device_identity_service.dart';
@@ -31,11 +33,22 @@ import 'package:just_audio/just_audio.dart';
 import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
 import 'package:record/record.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:uuid/uuid.dart';
 
 final InMemoryMessageRepository _fallbackMessageRepository =
     InMemoryMessageRepository();
+const String _supabaseUrl = String.fromEnvironment('SUPABASE_URL');
+const String _supabaseAnonKey = String.fromEnvironment('SUPABASE_ANON_KEY');
+const String _supabaseStorageBucket = String.fromEnvironment(
+  'SUPABASE_STORAGE_BUCKET',
+  defaultValue: 'chat-media',
+);
+const bool _enableFirebaseStorageUploadFallback = bool.fromEnvironment(
+  'ENABLE_FIREBASE_STORAGE_UPLOAD_FALLBACK',
+  defaultValue: false,
+);
 
 class ChatPage extends StatefulWidget {
   const ChatPage({required this.conversationId, super.key});
@@ -69,6 +82,8 @@ class _ChatPageState extends State<ChatPage> {
   bool _peerOnline = false;
   bool _peerAllowsLastSeen = true;
   bool _isTypingPublished = false;
+  bool _sharingLogs = false;
+  String? _lastUploadFailureReason;
   DateTime? _voiceRecordingStartedAt;
   DateTime? _peerLastSeenAt;
   String? _activeVoiceMessageId;
@@ -86,7 +101,7 @@ class _ChatPageState extends State<ChatPage> {
   @override
   void initState() {
     super.initState();
-    _conversationTitle = _defaultConversationTitle();
+    _conversationTitle = _bootstrapConversationTitle();
     final cryptoEngine = _resolveCryptoEngine();
     final messageRepository = _resolveMessageRepository();
     final sendTextMessageUseCase = _resolveSendTextMessageUseCase(
@@ -108,7 +123,7 @@ class _ChatPageState extends State<ChatPage> {
     super.didUpdateWidget(oldWidget);
     if (oldWidget.conversationId != widget.conversationId) {
       _peerProfileSubscription?.cancel();
-      _conversationTitle = _defaultConversationTitle();
+      _conversationTitle = _bootstrapConversationTitle();
       _isGroupConversation = false;
       _conversationCreatedAt = null;
       _conversationMemberIds = const <String>[];
@@ -279,6 +294,14 @@ class _ChatPageState extends State<ChatPage> {
                     PopupMenuItem(
                       value: _ChatMenuAction.clearChat,
                       child: Text(_tr(en: 'Clear chat', ar: 'مسح الدردشة')),
+                    ),
+                    PopupMenuItem(
+                      value: _ChatMenuAction.exportDebugLogs,
+                      child: Text(
+                        _sharingLogs
+                            ? 'Preparing debug logs...'
+                            : 'Export debug logs',
+                      ),
                     ),
                   ]);
                   return items;
@@ -905,7 +928,25 @@ class _ChatPageState extends State<ChatPage> {
       case _ChatMenuAction.clearChat:
         await _clearChat();
         break;
+      case _ChatMenuAction.exportDebugLogs:
+        await _exportDebugLogs();
+        break;
     }
+  }
+
+  Future<void> _exportDebugLogs() async {
+    if (_sharingLogs) {
+      return;
+    }
+    if (mounted) {
+      setState(() => _sharingLogs = true);
+    }
+    final result = await shareLatestDebugLogs(action: 'chat.logs.share');
+    if (!mounted) {
+      return;
+    }
+    setState(() => _sharingLogs = false);
+    _showSnack(result.message);
   }
 
   Future<void> _startCall(CallType type) async {
@@ -1886,7 +1927,9 @@ class _ChatPageState extends State<ChatPage> {
     final downloadUrl = await _uploadAttachment(file, type);
     if (downloadUrl == null || downloadUrl.isEmpty) {
       if (mounted) {
-        _showSnack('Failed to upload ${type.name} file');
+        _showSnack(
+          _lastUploadFailureReason ?? 'Failed to upload ${type.name} file',
+        );
       }
       return;
     }
@@ -2093,7 +2136,7 @@ class _ChatPageState extends State<ChatPage> {
         type: MessageType.voice,
       );
       if (downloadUrl == null || downloadUrl.isEmpty) {
-        _showSnack('Failed to upload voice note');
+        _showSnack(_lastUploadFailureReason ?? 'Failed to upload voice note');
         return;
       }
       final payload = jsonEncode({
@@ -2347,9 +2390,7 @@ class _ChatPageState extends State<ChatPage> {
   }
 
   Future<String?> _uploadAttachment(PlatformFile file, MessageType type) async {
-    if (Firebase.apps.isEmpty) {
-      return null;
-    }
+    _lastUploadFailureReason = null;
     final uid = FirebaseAuth.instance.currentUser?.uid;
     final bytes = file.bytes;
     final filePath = file.path;
@@ -2372,7 +2413,8 @@ class _ChatPageState extends State<ChatPage> {
         bytes: bytes,
         filePath: filePath,
       );
-    } catch (_) {
+    } catch (error) {
+      _lastUploadFailureReason = 'Upload failed: $error';
       return null;
     }
   }
@@ -2383,9 +2425,7 @@ class _ChatPageState extends State<ChatPage> {
     required String extension,
     required MessageType type,
   }) async {
-    if (Firebase.apps.isEmpty) {
-      return null;
-    }
+    _lastUploadFailureReason = null;
     final uid = FirebaseAuth.instance.currentUser?.uid;
     if (uid == null) {
       return null;
@@ -2403,7 +2443,8 @@ class _ChatPageState extends State<ChatPage> {
         ),
         filePath: filePath,
       );
-    } catch (_) {
+    } catch (error) {
+      _lastUploadFailureReason = 'Upload failed: $error';
       return null;
     }
   }
@@ -2414,7 +2455,33 @@ class _ChatPageState extends State<ChatPage> {
     List<int>? bytes,
     String? filePath,
   }) async {
+    if (_isSupabaseStorageConfigured) {
+      final supabaseUrl = await _uploadToSupabasePath(
+        storagePath: storagePath,
+        contentType: metadata.contentType,
+        bytes: bytes,
+        filePath: filePath,
+      );
+      if (supabaseUrl != null && supabaseUrl.isNotEmpty) {
+        return supabaseUrl;
+      }
+      return null;
+    }
+
+    if (!_enableFirebaseStorageUploadFallback) {
+      _lastUploadFailureReason =
+          'Supabase is not configured for this run. Start with --dart-define-from-file=supabase.env.json';
+      return null;
+    }
+
+    if (Firebase.apps.isEmpty) {
+      _lastUploadFailureReason = 'No media storage provider is configured.';
+      return null;
+    }
+
     final storages = _storageCandidates();
+    FirebaseException? lastFirebaseError;
+    Object? lastError;
     for (final storage in storages) {
       final ref = storage.ref().child(storagePath);
       try {
@@ -2425,16 +2492,222 @@ class _ChatPageState extends State<ChatPage> {
           filePath: filePath,
         );
         return await ref.getDownloadURL();
-      } catch (_) {
-        // Try next storage candidate.
+      } catch (error, stackTrace) {
+        AppLogger.warning(
+          'Storage upload candidate failed (bucket=${storage.bucket}, path=$storagePath)',
+          event: 'chat.media.upload.candidate_failed',
+          action: 'chat.media.upload',
+          metadata: <String, Object?>{
+            'bucket': storage.bucket,
+            'path': storagePath,
+            'error': error.toString(),
+          },
+        );
+        AppLogger.error(
+          'Storage upload candidate error (bucket=${storage.bucket}, path=$storagePath)',
+          error,
+          stackTrace,
+          event: 'chat.media.upload.candidate_exception',
+          action: 'chat.media.upload',
+          source: 'ChatPage',
+          operation: 'uploadToStoragePath',
+          metadata: <String, Object?>{
+            'bucket': storage.bucket,
+            'path': storagePath,
+          },
+        );
+        lastError = error;
+        if (error is FirebaseException) {
+          lastFirebaseError = error;
+        }
       }
+    }
+    if (lastFirebaseError?.code == 'object-not-found') {
+      _lastUploadFailureReason =
+          'Firebase Storage bucket is not initialized or not found for this project.';
+    } else if (lastFirebaseError != null) {
+      _lastUploadFailureReason =
+          'Upload failed with Firebase error: ${lastFirebaseError.code}';
+    } else if (lastError != null) {
+      _lastUploadFailureReason = 'Upload failed: $lastError';
     }
     return null;
   }
 
+  bool get _isSupabaseStorageConfigured =>
+      _supabaseUrl.isNotEmpty && _supabaseAnonKey.isNotEmpty;
+
+  SupabaseClient? _supabaseClientOrNull() {
+    if (!_isSupabaseStorageConfigured) {
+      return null;
+    }
+    try {
+      return Supabase.instance.client;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  Future<String?> _uploadToSupabasePath({
+    required String storagePath,
+    String? contentType,
+    List<int>? bytes,
+    String? filePath,
+  }) async {
+    final client = _supabaseClientOrNull();
+    if (client == null) {
+      _lastUploadFailureReason =
+          'Supabase is configured but not initialized. Restart the app and try again.';
+      return null;
+    }
+
+    final bucket = _supabaseStorageBucket.trim().isEmpty
+        ? 'chat-media'
+        : _supabaseStorageBucket.trim();
+    final normalizedPath = storagePath
+        .replaceAll('\\', '/')
+        .replaceFirst(RegExp(r'^/+'), '');
+    final storage = client.storage.from(bucket);
+
+    try {
+      if (bytes != null) {
+        await _uploadSupabaseBinaryWithRetry(
+          storage: storage,
+          path: normalizedPath,
+          bytes: Uint8List.fromList(bytes),
+          contentType: contentType,
+        );
+      } else {
+        if (filePath == null || filePath.isEmpty) {
+          throw StateError('Missing attachment file path');
+        }
+        final file = File(filePath);
+        final fileSize = await file.length();
+        if (fileSize <= 25 * 1024 * 1024) {
+          final data = await file.readAsBytes();
+          await _uploadSupabaseBinaryWithRetry(
+            storage: storage,
+            path: normalizedPath,
+            bytes: data,
+            contentType: contentType,
+          );
+        } else {
+          try {
+            await _uploadSupabaseFileWithRetry(
+              storage: storage,
+              path: normalizedPath,
+              file: file,
+              contentType: contentType,
+            );
+          } catch (_) {
+            if (fileSize > 40 * 1024 * 1024) {
+              rethrow;
+            }
+            final fallbackBytes = await file.readAsBytes();
+            await _uploadSupabaseBinaryWithRetry(
+              storage: storage,
+              path: normalizedPath,
+              bytes: fallbackBytes,
+              contentType: contentType,
+            );
+          }
+        }
+      }
+      return storage.getPublicUrl(normalizedPath);
+    } catch (error, stackTrace) {
+      AppLogger.warning(
+        'Supabase upload failed (bucket=$bucket, path=$normalizedPath)',
+        event: 'chat.media.upload.supabase_failed',
+        action: 'chat.media.upload',
+        metadata: <String, Object?>{
+          'bucket': bucket,
+          'path': normalizedPath,
+          'error': error.toString(),
+        },
+      );
+      AppLogger.error(
+        'Supabase upload exception (bucket=$bucket, path=$normalizedPath)',
+        error,
+        stackTrace,
+        event: 'chat.media.upload.supabase_exception',
+        action: 'chat.media.upload',
+        source: 'ChatPage',
+        operation: 'uploadToSupabasePath',
+        metadata: <String, Object?>{'bucket': bucket, 'path': normalizedPath},
+      );
+      _lastUploadFailureReason = _supabaseUploadFailureReason(error);
+      return null;
+    }
+  }
+
+  Future<void> _uploadSupabaseBinaryWithRetry({
+    required StorageFileApi storage,
+    required String path,
+    required Uint8List bytes,
+    String? contentType,
+  }) async {
+    Object? lastError;
+    final options = FileOptions(contentType: contentType, upsert: true);
+    for (var attempt = 0; attempt < 3; attempt++) {
+      try {
+        await storage.uploadBinary(path, bytes, fileOptions: options);
+        return;
+      } catch (error) {
+        lastError = error;
+        if (attempt < 2) {
+          await Future<void>.delayed(
+            Duration(milliseconds: 250 * (attempt + 1)),
+          );
+        }
+      }
+    }
+    throw lastError ?? StateError('Unable to upload attachment data');
+  }
+
+  Future<void> _uploadSupabaseFileWithRetry({
+    required StorageFileApi storage,
+    required String path,
+    required File file,
+    String? contentType,
+  }) async {
+    Object? lastError;
+    final options = FileOptions(contentType: contentType, upsert: true);
+    for (var attempt = 0; attempt < 3; attempt++) {
+      try {
+        await storage.upload(path, file, fileOptions: options);
+        return;
+      } catch (error) {
+        lastError = error;
+        if (attempt < 2) {
+          await Future<void>.delayed(
+            Duration(milliseconds: 350 * (attempt + 1)),
+          );
+        }
+      }
+    }
+    throw lastError ?? StateError('Unable to upload attachment file');
+  }
+
+  String _supabaseUploadFailureReason(Object error) {
+    final details = error.toString();
+    final lower = details.toLowerCase();
+    if (lower.contains('row-level security') ||
+        lower.contains('row level security') ||
+        lower.contains('violates row-level security')) {
+      return 'Supabase policy blocked this upload. Allow insert on this bucket for your client role.';
+    }
+    if (lower.contains('bucket') && lower.contains('not found')) {
+      return 'Supabase bucket is missing. Create bucket "$_supabaseStorageBucket" first.';
+    }
+    if (lower.contains('jwt') || lower.contains('token')) {
+      return 'Supabase key is invalid or expired.';
+    }
+    return 'Supabase upload failed: $details';
+  }
+
   List<FirebaseStorage> _storageCandidates() {
     if (Firebase.apps.isEmpty) {
-      return <FirebaseStorage>[FirebaseStorage.instance];
+      return <FirebaseStorage>[];
     }
 
     final options = Firebase.app().options;
@@ -3562,6 +3835,10 @@ class _ChatPageState extends State<ChatPage> {
     );
   }
 
+  String _bootstrapConversationTitle() {
+    return 'Conversation ${_shortId(widget.conversationId)}';
+  }
+
   String _conversationLabel(Conversation conversation) {
     final title = conversation.title?.trim();
     if (title != null && title.isNotEmpty) {
@@ -3716,6 +3993,7 @@ enum _ChatMenuAction {
   reportContact,
   toggleBlock,
   clearChat,
+  exportDebugLogs,
 }
 
 enum _AttachmentAction { image, video, file, location, contact }

@@ -178,8 +178,10 @@ extension GetItInjectableX on _i174.GetIt {
       () => _i690.BackupCubit(gh<_i688.BackupRepository>()),
     );
     gh.factory<_i52.AuthCubit>(
-      () =>
-          _i52.AuthCubit(gh<_i941.RequestOtpUseCase>(), gh<_i509.VerifyOtpUseCase>()),
+      () => _i52.AuthCubit(
+        gh<_i941.RequestOtpUseCase>(),
+        gh<_i509.VerifyOtpUseCase>(),
+      ),
     );
     gh.lazySingleton<_i399.NotificationRepository>(
       () => _i968.NotificationRepositoryImpl(

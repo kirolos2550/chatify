@@ -1,7 +1,7 @@
 name: chatify
 description: "Chatify production-grade messaging app foundation."
 publish_to: 'none'
-version: 1.0.3+4
+version: 1.0.4+5
 
 environment:
   sdk: ^3.10.8
@@ -40,10 +40,12 @@ dependencies:
   firebase_messaging: ^16.0.2
   flutter_local_notifications: ^19.4.2
   flutter_webrtc: ^1.2.0
+  supabase_flutter: ^2.9.1
   file_picker: ^10.3.3
   record: ^6.1.2
   just_audio: ^0.10.5
   url_launcher: ^6.3.2
+  share_plus: ^11.1.0
   json_annotation: ^4.9.0
   firebase_crashlytics: ^5.0.8
 

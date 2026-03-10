@@ -1,5 +1,6 @@
 import 'package:chatify/app/app.dart';
 import 'package:chatify/app/flavor.dart';
+import 'package:chatify/app/router/app_router.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:integration_test/integration_test.dart';
 
@@ -7,6 +8,7 @@ void main() {
   IntegrationTestWidgetsFlutterBinding.ensureInitialized();
 
   testWidgets('onboarding flow lands on home tabs', (tester) async {
+    AppRouter.router.go('/auth');
     await tester.pumpWidget(const ChatifyApp(flavor: AppFlavor.dev));
     await tester.pumpAndSettle();
 

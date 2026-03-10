@@ -5,6 +5,7 @@ import 'package:chatify/app/di/injection.dart';
 import 'package:chatify/app/emulator_port_probe.dart';
 import 'package:chatify/app/flavor.dart';
 import 'package:chatify/app/localization/app_locale_controller.dart';
+import 'package:chatify/app/router/app_router.dart';
 import 'package:chatify/core/common/app_logger.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:cloud_functions/cloud_functions.dart';
@@ -15,6 +16,7 @@ import 'package:firebase_crashlytics/firebase_crashlytics.dart';
 import 'package:firebase_storage/firebase_storage.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
 
 const bool _useFirebaseEmulators = bool.fromEnvironment(
   'USE_FIREBASE_EMULATORS',
@@ -27,37 +29,128 @@ const bool _enableCrashlyticsInDebug = bool.fromEnvironment(
   'CRASHLYTICS_IN_DEBUG',
   defaultValue: false,
 );
+const String _supabaseUrl = String.fromEnvironment('SUPABASE_URL');
+const String _supabaseAnonKey = String.fromEnvironment('SUPABASE_ANON_KEY');
+const String _supabaseStorageBucket = String.fromEnvironment(
+  'SUPABASE_STORAGE_BUCKET',
+  defaultValue: 'chat-media',
+);
 
 bool _emulatorsConfigured = false;
+bool _supabaseInitialized = false;
+AppLifecycleListener? _lifecycleListener;
+Timer? _uiHangWatchdog;
+DateTime? _uiHangLastTick;
+const Duration _uiHangProbeInterval = Duration(milliseconds: 700);
+const Duration _uiHangThreshold = Duration(seconds: 4);
 
 Future<void> bootstrap(AppFlavor flavor) async {
   await runZonedGuarded(
     () async {
       WidgetsFlutterBinding.ensureInitialized();
+      await AppLogger.initDebugSession(
+        flavor: flavor.nameValue,
+        buildMode: kReleaseMode
+            ? 'release'
+            : kProfileMode
+            ? 'profile'
+            : 'debug',
+        platform: kIsWeb ? 'web' : defaultTargetPlatform.name,
+      );
+
       final previousFlutterErrorHandler = FlutterError.onError;
       FlutterError.onError = (details) {
         previousFlutterErrorHandler?.call(details);
-        AppLogger.error('FlutterError', details.exception, details.stack);
+        AppLogger.error(
+          'FlutterError',
+          details.exception,
+          details.stack,
+          event: 'flutter.framework.error',
+        );
         unawaited(_recordFlutterFatalError(details));
       };
       PlatformDispatcher.instance.onError = (error, stackTrace) {
-        AppLogger.error('PlatformError', error, stackTrace);
+        AppLogger.error(
+          'PlatformError',
+          error,
+          stackTrace,
+          event: 'flutter.platform.error',
+        );
         unawaited(_recordError(error, stackTrace, fatal: true));
         return true;
       };
 
       await _initFirebase();
+      await _initSupabase();
       await _configureCrashlytics(flavor);
       await _configureFirebaseRuntime(flavor);
       await configureDependencies(flavor);
       await AppLocaleController.instance.load();
       runApp(ChatifyApp(flavor: flavor));
+      _startUiHangWatchdog();
+
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        AppRouter.enableRouteTracing();
+      });
+
+      _lifecycleListener ??= AppLifecycleListener(
+        onStateChange: (state) {
+          AppLogger.breadcrumb(
+            'app.lifecycle.$state',
+            action: 'lifecycle.state_change',
+          );
+          switch (state) {
+            case AppLifecycleState.inactive:
+            case AppLifecycleState.paused:
+            case AppLifecycleState.hidden:
+            case AppLifecycleState.detached:
+              unawaited(AppLogger.flush());
+              break;
+            case AppLifecycleState.resumed:
+              break;
+          }
+        },
+        onDetach: () {
+          _uiHangWatchdog?.cancel();
+          _uiHangWatchdog = null;
+          unawaited(AppLogger.flushAndClose());
+        },
+      );
     },
     (error, stackTrace) {
-      AppLogger.error('ZoneError', error, stackTrace);
+      AppLogger.error(
+        'ZoneError',
+        error,
+        stackTrace,
+        event: 'flutter.zone.error',
+      );
       unawaited(_recordError(error, stackTrace, fatal: true));
     },
   );
+}
+
+void _startUiHangWatchdog() {
+  _uiHangWatchdog?.cancel();
+  _uiHangLastTick = DateTime.now().toUtc();
+  _uiHangWatchdog = Timer.periodic(_uiHangProbeInterval, (_) {
+    final now = DateTime.now().toUtc();
+    final previous = _uiHangLastTick;
+    if (previous != null) {
+      final gap = now.difference(previous);
+      if (gap > _uiHangThreshold) {
+        AppLogger.warning(
+          'Potential UI stall detected',
+          event: 'diagnostics.ui_stall.detected',
+          action: 'diagnostics.ui_stall',
+          metadata: <String, Object?>{
+            'gapMs': gap.inMilliseconds,
+            'thresholdMs': _uiHangThreshold.inMilliseconds,
+          },
+        );
+      }
+    }
+    _uiHangLastTick = now;
+  });
 }
 
 Future<void> _initFirebase() async {
@@ -70,8 +163,55 @@ Future<void> _initFirebase() async {
   } catch (error, stackTrace) {
     // During local setup, Firebase native config can be absent.
     if (kDebugMode) {
-      AppLogger.error('Firebase initialization skipped', error, stackTrace);
+      AppLogger.error(
+        'Firebase initialization skipped',
+        error,
+        stackTrace,
+        event: 'firebase.init.skipped',
+      );
     }
+  }
+}
+
+Future<void> _initSupabase() async {
+  if (_supabaseInitialized) {
+    return;
+  }
+  if (_supabaseUrl.isEmpty || _supabaseAnonKey.isEmpty) {
+    if (kDebugMode) {
+      AppLogger.info(
+        'Supabase is not configured. Set SUPABASE_URL and SUPABASE_ANON_KEY to enable media uploads via Supabase.',
+        event: 'supabase.init.skipped',
+      );
+    }
+    return;
+  }
+
+  try {
+    await Supabase.initialize(
+      url: _supabaseUrl,
+      anonKey: _supabaseAnonKey,
+      debug: kDebugMode,
+    );
+    _supabaseInitialized = true;
+    AppLogger.info(
+      'Supabase initialized for media storage.',
+      event: 'supabase.init.success',
+      metadata: <String, Object?>{
+        'host': Uri.tryParse(_supabaseUrl)?.host ?? _supabaseUrl,
+        'bucket': _supabaseStorageBucket,
+      },
+    );
+  } catch (error, stackTrace) {
+    AppLogger.error(
+      'Supabase initialization failed',
+      error,
+      stackTrace,
+      event: 'supabase.init.failure',
+      metadata: <String, Object?>{
+        'host': Uri.tryParse(_supabaseUrl)?.host ?? _supabaseUrl,
+      },
+    );
   }
 }
 
@@ -95,6 +235,8 @@ Future<void> _configureFirebaseRuntime(AppFlavor flavor) async {
     AppLogger.info(
       'Firebase Auth emulator is not reachable on $host:9099. '
       'Falling back to live Firebase services.',
+      event: 'firebase.emulator.auth.unreachable',
+      metadata: <String, Object?>{'host': host, 'port': 9099},
     );
     return;
   }
@@ -107,6 +249,14 @@ Future<void> _configureFirebaseRuntime(AppFlavor flavor) async {
   _emulatorsConfigured = true;
   AppLogger.info(
     'Firebase emulators enabled on $host (auth:9099, firestore:8080, functions:5001, storage:9199)',
+    event: 'firebase.emulator.enabled',
+    metadata: <String, Object?>{
+      'host': host,
+      'authPort': 9099,
+      'firestorePort': 8080,
+      'functionsPort': 5001,
+      'storagePort': 9199,
+    },
   );
 }
 
@@ -120,6 +270,7 @@ Future<void> _configureCrashlytics(AppFlavor flavor) async {
     if (!enabled) {
       AppLogger.info(
         'Crashlytics disabled in debug. Enable with --dart-define=CRASHLYTICS_IN_DEBUG=true',
+        event: 'crashlytics.disabled.debug',
       );
       return;
     }
@@ -128,7 +279,12 @@ Future<void> _configureCrashlytics(AppFlavor flavor) async {
       flavor.nameValue,
     );
   } catch (error, stackTrace) {
-    AppLogger.error('Crashlytics setup failed', error, stackTrace);
+    AppLogger.error(
+      'Crashlytics setup failed',
+      error,
+      stackTrace,
+      event: 'crashlytics.setup.failure',
+    );
   }
 }
 
@@ -139,7 +295,12 @@ Future<void> _recordFlutterFatalError(FlutterErrorDetails details) async {
   try {
     await FirebaseCrashlytics.instance.recordFlutterFatalError(details);
   } catch (error, stackTrace) {
-    AppLogger.error('Crashlytics record failed', error, stackTrace);
+    AppLogger.error(
+      'Crashlytics record failed',
+      error,
+      stackTrace,
+      event: 'crashlytics.record.flutter_failure',
+    );
   }
 }
 
@@ -158,7 +319,12 @@ Future<void> _recordError(
       fatal: fatal,
     );
   } catch (innerError, innerStackTrace) {
-    AppLogger.error('Crashlytics record failed', innerError, innerStackTrace);
+    AppLogger.error(
+      'Crashlytics record failed',
+      innerError,
+      innerStackTrace,
+      event: 'crashlytics.record.error_failure',
+    );
   }
 }
 

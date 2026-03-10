@@ -1,3 +1,4 @@
+import 'package:chatify/core/common/app_logger.dart';
 import 'package:chatify/core/common/failure.dart';
 import 'package:chatify/core/common/result.dart';
 import 'package:chatify/core/data/local/app_database.dart';
@@ -84,8 +85,20 @@ class MessageRepositoryImpl implements MessageRepository {
             ),
           );
       return const Success(null);
-    } catch (e) {
-      return FailureResult(Failure(e.toString()));
+    } catch (e, stackTrace) {
+      return FailureResult(
+        _failureFrom(
+          e,
+          stackTrace: stackTrace,
+          operation: 'sendMessage',
+          metadata: <String, Object?>{
+            'conversationId': conversationId,
+            'messageId': message.id,
+            'messageType': message.type.name,
+            'messageBody': message.ciphertext,
+          },
+        ),
+      );
     }
   }
 
@@ -106,8 +119,19 @@ class MessageRepositoryImpl implements MessageRepository {
             'editedAt': FieldValue.serverTimestamp(),
           }, SetOptions(merge: true));
       return const Success(null);
-    } catch (e) {
-      return FailureResult(Failure(e.toString()));
+    } catch (e, stackTrace) {
+      return FailureResult(
+        _failureFrom(
+          e,
+          stackTrace: stackTrace,
+          operation: 'editMessage',
+          metadata: <String, Object?>{
+            'conversationId': conversationId,
+            'messageId': messageId,
+            'messageBody': editCiphertext,
+          },
+        ),
+      );
     }
   }
 
@@ -126,8 +150,18 @@ class MessageRepositoryImpl implements MessageRepository {
             'deletedForAllAt': FieldValue.serverTimestamp(),
           }, SetOptions(merge: true));
       return const Success(null);
-    } catch (e) {
-      return FailureResult(Failure(e.toString()));
+    } catch (e, stackTrace) {
+      return FailureResult(
+        _failureFrom(
+          e,
+          stackTrace: stackTrace,
+          operation: 'deleteMessageForEveryone',
+          metadata: <String, Object?>{
+            'conversationId': conversationId,
+            'messageId': messageId,
+          },
+        ),
+      );
     }
   }
 
@@ -138,6 +172,15 @@ class MessageRepositoryImpl implements MessageRepository {
   }) async {
     final uid = FirebaseAuth.instance.currentUser?.uid;
     if (uid == null) {
+      AppLogger.warning(
+        'Delete message for me rejected because no active user exists',
+        event: 'message.repository.no_active_user',
+        action: 'message.delete_for_me',
+        metadata: <String, Object?>{
+          'conversationId': conversationId,
+          'messageId': messageId,
+        },
+      );
       return const FailureResult(Failure('No active user'));
     }
     try {
@@ -150,8 +193,19 @@ class MessageRepositoryImpl implements MessageRepository {
             'deletedForUserIds': FieldValue.arrayUnion([uid]),
           }, SetOptions(merge: true));
       return const Success(null);
-    } catch (e) {
-      return FailureResult(Failure(e.toString()));
+    } catch (e, stackTrace) {
+      return FailureResult(
+        _failureFrom(
+          e,
+          stackTrace: stackTrace,
+          operation: 'deleteMessageForMe',
+          metadata: <String, Object?>{
+            'conversationId': conversationId,
+            'messageId': messageId,
+            'userId': uid,
+          },
+        ),
+      );
     }
   }
 
@@ -209,8 +263,18 @@ class MessageRepositoryImpl implements MessageRepository {
         await batch.commit();
       }
       return const Success(null);
-    } catch (e) {
-      return FailureResult(Failure(e.toString()));
+    } catch (e, stackTrace) {
+      return FailureResult(
+        _failureFrom(
+          e,
+          stackTrace: stackTrace,
+          operation: 'markConversationRead',
+          metadata: <String, Object?>{
+            'conversationId': conversationId,
+            'userId': userId,
+          },
+        ),
+      );
     }
   }
 
@@ -241,8 +305,15 @@ class MessageRepositoryImpl implements MessageRepository {
       }
 
       return const Success(null);
-    } catch (e) {
-      return FailureResult(Failure(e.toString()));
+    } catch (e, stackTrace) {
+      return FailureResult(
+        _failureFrom(
+          e,
+          stackTrace: stackTrace,
+          operation: 'clearConversationMessages',
+          metadata: <String, Object?>{'conversationId': conversationId},
+        ),
+      );
     }
   }
 
@@ -267,8 +338,20 @@ class MessageRepositoryImpl implements MessageRepository {
             : normalizedEmoji,
       }, SetOptions(merge: true));
       return const Success(null);
-    } catch (e) {
-      return FailureResult(Failure(e.toString()));
+    } catch (e, stackTrace) {
+      return FailureResult(
+        _failureFrom(
+          e,
+          stackTrace: stackTrace,
+          operation: 'setMessageReaction',
+          metadata: <String, Object?>{
+            'conversationId': conversationId,
+            'messageId': messageId,
+            'userId': userId,
+            'emoji': normalizedEmoji,
+          },
+        ),
+      );
     }
   }
 
@@ -291,8 +374,20 @@ class MessageRepositoryImpl implements MessageRepository {
                 : FieldValue.arrayRemove([userId]),
           }, SetOptions(merge: true));
       return const Success(null);
-    } catch (e) {
-      return FailureResult(Failure(e.toString()));
+    } catch (e, stackTrace) {
+      return FailureResult(
+        _failureFrom(
+          e,
+          stackTrace: stackTrace,
+          operation: 'setMessageStarred',
+          metadata: <String, Object?>{
+            'conversationId': conversationId,
+            'messageId': messageId,
+            'userId': userId,
+            'starred': starred,
+          },
+        ),
+      );
     }
   }
 
@@ -315,8 +410,20 @@ class MessageRepositoryImpl implements MessageRepository {
                 : FieldValue.arrayRemove([userId]),
           }, SetOptions(merge: true));
       return const Success(null);
-    } catch (e) {
-      return FailureResult(Failure(e.toString()));
+    } catch (e, stackTrace) {
+      return FailureResult(
+        _failureFrom(
+          e,
+          stackTrace: stackTrace,
+          operation: 'setMessagePinned',
+          metadata: <String, Object?>{
+            'conversationId': conversationId,
+            'messageId': messageId,
+            'userId': userId,
+            'pinned': pinned,
+          },
+        ),
+      );
     }
   }
 
@@ -383,6 +490,35 @@ class MessageRepositoryImpl implements MessageRepository {
       }
     });
     return Map<String, String>.unmodifiable(output);
+  }
+
+  Failure _failureFrom(
+    Object error, {
+    required String operation,
+    StackTrace? stackTrace,
+    Map<String, Object?>? metadata,
+  }) {
+    final failure = Failure.fromException(
+      error,
+      stackTrace: stackTrace,
+      source: 'MessageRepositoryImpl',
+      operation: operation,
+      metadata: metadata,
+    );
+    AppLogger.error(
+      failure.message,
+      failure.cause ?? error,
+      failure.stackTrace ?? stackTrace,
+      event: 'message.repository.failure',
+      source: failure.source,
+      operation: failure.operation,
+      action: 'message.repository',
+      metadata: <String, Object?>{
+        ...?failure.metadata,
+        if (failure.code != null) 'failureCode': failure.code,
+      },
+    );
+    return failure;
   }
 
   Future<bool> _isReadReceiptsEnabled(String uid) async {
