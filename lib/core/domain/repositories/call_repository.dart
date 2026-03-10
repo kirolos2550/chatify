@@ -10,5 +10,9 @@ abstract interface class CallRepository {
     required CallType type,
   });
 
+  Future<Result<void>> acceptCall({required String callId});
+
+  Future<Result<void>> rejectCall({required String callId});
+
   Future<Result<void>> endCall({required String callId});
 }

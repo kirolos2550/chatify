@@ -1,7 +1,9 @@
 import 'package:chatify/app/di/injection.dart';
 import 'package:chatify/core/common/app_logger.dart';
+import 'package:chatify/core/domain/entities/call_session.dart';
 import 'package:chatify/core/domain/enums/chat_enums.dart';
 import 'package:chatify/features/calls/presentation/bloc/calls_cubit.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
@@ -28,6 +30,7 @@ class _CallsPageState extends State<CallsPage> {
       subtitle: 'Today, video call',
       type: CallType.video,
       state: CallState.ringing,
+      isIncoming: true,
     ),
   ];
 
@@ -44,6 +47,8 @@ class _CallsPageState extends State<CallsPage> {
         showDemoHint: true,
         onStartCall: _startLocalCall,
         onEndCall: _endLocalCall,
+        onAcceptCall: _acceptLocalCall,
+        onRejectCall: _rejectLocalCall,
       );
     }
 
@@ -67,10 +72,12 @@ class _CallsPageState extends State<CallsPage> {
               .map(
                 (call) => _LocalCallEntry(
                   callId: call.callId,
-                  title: call.participantIds.join(', '),
-                  subtitle: '${call.type.name} call',
+                  title: _resolveCallTitle(call),
+                  subtitle:
+                      '${_isIncomingCall(call) ? 'Incoming' : 'Outgoing'} ${call.type.name} call',
                   type: call.type,
                   state: call.state,
+                  isIncoming: _isIncomingCall(call),
                 ),
               )
               .toList();
@@ -88,10 +95,41 @@ class _CallsPageState extends State<CallsPage> {
             onEndCall: (callId) async {
               await context.read<CallsCubit>().endCall(callId);
             },
+            onAcceptCall: (callId) async {
+              await context.read<CallsCubit>().acceptCall(callId);
+            },
+            onRejectCall: (callId) async {
+              await context.read<CallsCubit>().rejectCall(callId);
+            },
           );
         },
       ),
     );
+  }
+
+  String? get _currentUserId => FirebaseAuth.instance.currentUser?.uid;
+
+  bool _isIncomingCall(CallSession call) {
+    final current = _currentUserId;
+    if (current == null || current.isEmpty) {
+      return false;
+    }
+    final initiatorId = call.initiatorId;
+    if (initiatorId == null || initiatorId.isEmpty) {
+      return false;
+    }
+    return initiatorId != current;
+  }
+
+  String _resolveCallTitle(CallSession call) {
+    final current = _currentUserId;
+    final others = call.participantIds
+        .where((participant) => current == null || participant != current)
+        .toList(growable: false);
+    if (others.isNotEmpty) {
+      return others.join(', ');
+    }
+    return call.initiatorId ?? 'Unknown';
   }
 
   Future<void> _startLocalCall(
@@ -128,6 +166,28 @@ class _CallsPageState extends State<CallsPage> {
       _localCalls[index] = current.copyWith(state: CallState.ended);
     });
   }
+
+  Future<void> _acceptLocalCall(String callId) async {
+    final index = _localCalls.indexWhere((entry) => entry.callId == callId);
+    if (index < 0) {
+      return;
+    }
+    setState(() {
+      final current = _localCalls[index];
+      _localCalls[index] = current.copyWith(state: CallState.connected);
+    });
+  }
+
+  Future<void> _rejectLocalCall(String callId) async {
+    final index = _localCalls.indexWhere((entry) => entry.callId == callId);
+    if (index < 0) {
+      return;
+    }
+    setState(() {
+      final current = _localCalls[index];
+      _localCalls[index] = current.copyWith(state: CallState.missed);
+    });
+  }
 }
 
 class _CallsScaffold extends StatelessWidget {
@@ -138,6 +198,8 @@ class _CallsScaffold extends StatelessWidget {
     required this.showDemoHint,
     required this.onStartCall,
     required this.onEndCall,
+    required this.onAcceptCall,
+    required this.onRejectCall,
   });
 
   final List<_LocalCallEntry> entries;
@@ -147,6 +209,8 @@ class _CallsScaffold extends StatelessWidget {
   final Future<void> Function(CallType type, List<String> participantIds)
   onStartCall;
   final Future<void> Function(String callId) onEndCall;
+  final Future<void> Function(String callId) onAcceptCall;
+  final Future<void> Function(String callId) onRejectCall;
 
   @override
   Widget build(BuildContext context) {
@@ -172,6 +236,12 @@ class _CallsScaffold extends StatelessWidget {
                       final icon = item.type == CallType.video
                           ? Icons.videocam
                           : Icons.call;
+                      final canAnswerIncoming =
+                          item.isIncoming && item.state == CallState.ringing;
+                      final canEndCall =
+                          item.state == CallState.ringing ||
+                          item.state == CallState.connecting ||
+                          item.state == CallState.connected;
                       return ListTile(
                         leading: CircleAvatar(
                           child: Text(
@@ -181,14 +251,42 @@ class _CallsScaffold extends StatelessWidget {
                           ),
                         ),
                         title: Text(item.title),
-                        subtitle: Text('${item.subtitle} • ${item.state.name}'),
-                        trailing: item.state == CallState.ended
-                            ? Icon(icon)
-                            : IconButton(
+                        subtitle: Text('${item.subtitle} - ${item.state.name}'),
+                        trailing: canAnswerIncoming
+                            ? Row(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  IconButton(
+                                    tooltip: 'Answer',
+                                    icon: const Icon(
+                                      Icons.call,
+                                      color: Colors.green,
+                                    ),
+                                    onPressed: busy
+                                        ? null
+                                        : () => onAcceptCall(item.callId),
+                                  ),
+                                  IconButton(
+                                    tooltip: 'Decline',
+                                    icon: const Icon(
+                                      Icons.call_end,
+                                      color: Colors.red,
+                                    ),
+                                    onPressed: busy
+                                        ? null
+                                        : () => onRejectCall(item.callId),
+                                  ),
+                                ],
+                              )
+                            : canEndCall
+                            ? IconButton(
                                 tooltip: 'End call',
                                 icon: const Icon(Icons.call_end),
-                                onPressed: () => onEndCall(item.callId),
-                              ),
+                                onPressed: busy
+                                    ? null
+                                    : () => onEndCall(item.callId),
+                              )
+                            : Icon(icon),
                       );
                     },
                   ),
@@ -283,6 +381,7 @@ class _LocalCallEntry {
     required this.subtitle,
     required this.type,
     required this.state,
+    this.isIncoming = false,
   });
 
   final String callId;
@@ -290,6 +389,7 @@ class _LocalCallEntry {
   final String subtitle;
   final CallType type;
   final CallState state;
+  final bool isIncoming;
 
   _LocalCallEntry copyWith({
     String? callId,
@@ -297,6 +397,7 @@ class _LocalCallEntry {
     String? subtitle,
     CallType? type,
     CallState? state,
+    bool? isIncoming,
   }) {
     return _LocalCallEntry(
       callId: callId ?? this.callId,
@@ -304,6 +405,7 @@ class _LocalCallEntry {
       subtitle: subtitle ?? this.subtitle,
       type: type ?? this.type,
       state: state ?? this.state,
+      isIncoming: isIncoming ?? this.isIncoming,
     );
   }
 }

@@ -141,6 +141,62 @@ class CallsCubit extends Cubit<CallsState> {
     emit(state.copyWith(busy: false, clearError: true));
   }
 
+  Future<void> acceptCall(String callId) async {
+    AppLogger.breadcrumb(
+      'calls.accept',
+      action: 'calls.accept',
+      metadata: <String, Object?>{'callId': callId},
+    );
+    emit(state.copyWith(busy: true, clearError: true));
+    final result = await _repository.acceptCall(callId: callId);
+    if (result.error != null) {
+      result.logIfFailure(
+        event: 'calls.accept.failure',
+        action: 'calls.accept',
+        source: 'CallsCubit',
+        operation: 'acceptCall',
+        metadata: <String, Object?>{'callId': callId},
+      );
+      emit(state.copyWith(busy: false, errorMessage: result.error!.message));
+      return;
+    }
+    AppLogger.info(
+      'Accept call succeeded',
+      event: 'calls.accept.success',
+      action: 'calls.accept',
+      metadata: <String, Object?>{'callId': callId},
+    );
+    emit(state.copyWith(busy: false, clearError: true));
+  }
+
+  Future<void> rejectCall(String callId) async {
+    AppLogger.breadcrumb(
+      'calls.reject',
+      action: 'calls.reject',
+      metadata: <String, Object?>{'callId': callId},
+    );
+    emit(state.copyWith(busy: true, clearError: true));
+    final result = await _repository.rejectCall(callId: callId);
+    if (result.error != null) {
+      result.logIfFailure(
+        event: 'calls.reject.failure',
+        action: 'calls.reject',
+        source: 'CallsCubit',
+        operation: 'rejectCall',
+        metadata: <String, Object?>{'callId': callId},
+      );
+      emit(state.copyWith(busy: false, errorMessage: result.error!.message));
+      return;
+    }
+    AppLogger.info(
+      'Reject call succeeded',
+      event: 'calls.reject.success',
+      action: 'calls.reject',
+      metadata: <String, Object?>{'callId': callId},
+    );
+    emit(state.copyWith(busy: false, clearError: true));
+  }
+
   @override
   Future<void> close() async {
     await _subscription?.cancel();

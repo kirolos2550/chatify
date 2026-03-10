@@ -169,6 +169,16 @@ Verify token must match `WHATSAPP_VERIFY_TOKEN`.
 - Improved old voice-note playback compatibility by reusing the legacy attachment fallback path and broader duration-key parsing.
 - Improved upload reliability by normalizing Firebase Storage bucket candidates and preferring explicit `.appspot.com` fallback for projects configured with `.firebasestorage.app`.
 - Enabled Android `android:enableOnBackInvokedCallback="true"` to resolve back-invocation warnings on modern Android versions.
+- Added smart chat auto-scroll behavior:
+  - Auto-jumps to latest message on initial open.
+  - Auto-scrolls on new incoming messages only when user is near bottom.
+  - Keeps manual upward browsing stable (does not force-scroll while reading old messages).
+- Fixed call signaling flow for real users:
+  - Calls stream now scoped to current user via `participantIds` filtering.
+  - `initiatorId`/`answeredBy` are persisted in call sessions.
+  - Added accept/reject call actions in repository + cubit + calls UI.
+- Added incoming-call local alerts in app bootstrap listener and requested notification permissions at runtime.
+- Added Android `POST_NOTIFICATIONS` permission for reliable incoming call notifications.
 
 ### Supabase setup required for media uploads
 

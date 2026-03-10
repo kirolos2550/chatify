@@ -7,6 +7,8 @@ import 'package:chatify/app/flavor.dart';
 import 'package:chatify/app/localization/app_locale_controller.dart';
 import 'package:chatify/app/router/app_router.dart';
 import 'package:chatify/core/common/app_logger.dart';
+import 'package:chatify/core/network/firebase_paths.dart';
+import 'package:chatify/core/notifications/chat_local_notifications.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:cloud_functions/cloud_functions.dart';
 import 'package:firebase_auth/firebase_auth.dart';
@@ -16,7 +18,7 @@ import 'package:firebase_crashlytics/firebase_crashlytics.dart';
 import 'package:firebase_storage/firebase_storage.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
-import 'package:supabase_flutter/supabase_flutter.dart';
+import 'package:supabase_flutter/supabase_flutter.dart' hide User;
 
 const bool _useFirebaseEmulators = bool.fromEnvironment(
   'USE_FIREBASE_EMULATORS',
@@ -49,6 +51,10 @@ Timer? _uiHangWatchdog;
 DateTime? _uiHangLastTick;
 const Duration _uiHangProbeInterval = Duration(milliseconds: 700);
 const Duration _uiHangThreshold = Duration(seconds: 4);
+StreamSubscription<User?>? _incomingCallAuthSubscription;
+StreamSubscription<QuerySnapshot<Map<String, dynamic>>>?
+_incomingCallSubscription;
+final Set<String> _notifiedIncomingCallIds = <String>{};
 
 Future<void> bootstrap(AppFlavor flavor) async {
   await runZonedGuarded(
@@ -94,6 +100,7 @@ Future<void> bootstrap(AppFlavor flavor) async {
       await AppLocaleController.instance.load();
       runApp(ChatifyApp(flavor: flavor));
       _startUiHangWatchdog();
+      _startIncomingCallAlerts();
 
       WidgetsBinding.instance.addPostFrameCallback((_) {
         AppRouter.enableRouteTracing();
@@ -119,6 +126,11 @@ Future<void> bootstrap(AppFlavor flavor) async {
         onDetach: () {
           _uiHangWatchdog?.cancel();
           _uiHangWatchdog = null;
+          _incomingCallSubscription?.cancel();
+          _incomingCallSubscription = null;
+          _incomingCallAuthSubscription?.cancel();
+          _incomingCallAuthSubscription = null;
+          _notifiedIncomingCallIds.clear();
           unawaited(AppLogger.flushAndClose());
         },
       );
@@ -157,6 +169,99 @@ void _startUiHangWatchdog() {
     }
     _uiHangLastTick = now;
   });
+}
+
+void _startIncomingCallAlerts() {
+  if (Firebase.apps.isEmpty || _incomingCallAuthSubscription != null) {
+    return;
+  }
+
+  _incomingCallAuthSubscription = FirebaseAuth.instance
+      .authStateChanges()
+      .listen((user) {
+        _incomingCallSubscription?.cancel();
+        _incomingCallSubscription = null;
+        _notifiedIncomingCallIds.clear();
+        if (user == null) {
+          return;
+        }
+
+        _incomingCallSubscription = FirebaseFirestore.instance
+            .collection(FirebasePaths.calls)
+            .where('participantIds', arrayContains: user.uid)
+            .snapshots()
+            .listen(
+              (snapshot) {
+                final activeIncomingRingingIds = <String>{};
+                for (final doc in snapshot.docs) {
+                  final data = doc.data();
+                  final state = (data['state'] as String?)?.trim() ?? '';
+                  final initiatorId =
+                      (data['initiatorId'] as String?)?.trim() ?? '';
+                  if (state != 'ringing' ||
+                      initiatorId.isEmpty ||
+                      initiatorId == user.uid) {
+                    continue;
+                  }
+                  activeIncomingRingingIds.add(doc.id);
+                  if (_notifiedIncomingCallIds.contains(doc.id)) {
+                    continue;
+                  }
+                  _notifiedIncomingCallIds.add(doc.id);
+                  final callType = (data['type'] as String?) == 'video'
+                      ? 'video'
+                      : 'voice';
+                  final callerLabel = initiatorId;
+                  unawaited(
+                    _showIncomingCallNotification(
+                      callId: doc.id,
+                      callerLabel: callerLabel,
+                      callType: callType,
+                    ),
+                  );
+                }
+                _notifiedIncomingCallIds.retainAll(activeIncomingRingingIds);
+              },
+              onError: (Object error, StackTrace stackTrace) {
+                AppLogger.error(
+                  'Incoming call listener failed',
+                  error,
+                  stackTrace,
+                  event: 'calls.incoming.listener_failure',
+                  action: 'calls.incoming.listen',
+                );
+              },
+            );
+      });
+}
+
+Future<void> _showIncomingCallNotification({
+  required String callId,
+  required String callerLabel,
+  required String callType,
+}) async {
+  if (!getIt.isRegistered<ChatLocalNotifications>()) {
+    return;
+  }
+  try {
+    final notifications = getIt<ChatLocalNotifications>();
+    await notifications.initialize();
+    await notifications.showIncomingCallAlert(
+      id: callId.hashCode & 0x7fffffff,
+      callerLabel: callerLabel,
+      callId: callId,
+      callType: callType,
+    );
+  } catch (error, stackTrace) {
+    AppLogger.error(
+      'Incoming call notification failed',
+      error,
+      stackTrace,
+      event: 'calls.incoming.notification_failure',
+      action: 'calls.incoming.notify',
+      metadata: <String, Object?>{'callId': callId},
+    );
+  }
 }
 
 Future<void> _initFirebase() async {

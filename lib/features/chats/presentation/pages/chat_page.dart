@@ -68,6 +68,7 @@ class ChatPage extends StatefulWidget {
 class _ChatPageState extends State<ChatPage> {
   late final ChatThreadCubit _chatThreadCubit;
   final TextEditingController _messageController = TextEditingController();
+  final ScrollController _messagesScrollController = ScrollController();
   final AudioRecorder _audioRecorder = AudioRecorder();
   final AudioPlayer _voicePlayer = AudioPlayer();
   StreamSubscription<Duration>? _voicePositionSubscription;
@@ -103,6 +104,11 @@ class _ChatPageState extends State<ChatPage> {
   List<String> _conversationMemberIds = const <String>[];
   final Map<String, Future<String?>> _resolvedAttachmentUrlCache =
       <String, Future<String?>>{};
+  bool _isNearMessagesBottom = true;
+  String? _lastObservedTailMessageId;
+  int _lastObservedMessagesCount = 0;
+
+  static const double _autoScrollThresholdPx = 72;
 
   @override
   void initState() {
@@ -120,6 +126,7 @@ class _ChatPageState extends State<ChatPage> {
       cryptoEngine,
       _resolveCurrentUserId(),
     )..start(widget.conversationId);
+    _messagesScrollController.addListener(_onMessagesScroll);
     _attachVoicePlayerListeners();
     unawaited(_initRealtimeSignals());
   }
@@ -134,6 +141,9 @@ class _ChatPageState extends State<ChatPage> {
       _conversationCreatedAt = null;
       _conversationMemberIds = const <String>[];
       _resolvedAttachmentUrlCache.clear();
+      _isNearMessagesBottom = true;
+      _lastObservedTailMessageId = null;
+      _lastObservedMessagesCount = 0;
       _chatThreadCubit.start(widget.conversationId);
       unawaited(_resetVoicePlayback());
       unawaited(_initRealtimeSignals());
@@ -156,6 +166,9 @@ class _ChatPageState extends State<ChatPage> {
     _voiceDurationSubscription?.cancel();
     _voicePlayerStateSubscription?.cancel();
     _voicePlayer.dispose();
+    _messagesScrollController
+      ..removeListener(_onMessagesScroll)
+      ..dispose();
     _messageController.dispose();
     _chatThreadCubit.close();
     super.dispose();
@@ -323,7 +336,14 @@ class _ChatPageState extends State<ChatPage> {
                 builder: (context, state) => _buildPinnedMessagesBanner(state),
               ),
               Expanded(
-                child: BlocBuilder<ChatThreadCubit, ChatThreadState>(
+                child: BlocConsumer<ChatThreadCubit, ChatThreadState>(
+                  listenWhen: (previous, current) =>
+                      previous.messages != current.messages ||
+                      (previous.loading != current.loading &&
+                          current.messages.isNotEmpty),
+                  listener: (context, state) {
+                    _maybeAutoScrollToLatest(state);
+                  },
                   builder: (context, state) {
                     if (state.loading) {
                       return const Center(child: CircularProgressIndicator());
@@ -334,6 +354,7 @@ class _ChatPageState extends State<ChatPage> {
                       );
                     }
                     return ListView.builder(
+                      controller: _messagesScrollController,
                       padding: const EdgeInsets.symmetric(
                         horizontal: 12,
                         vertical: 8,
@@ -814,6 +835,73 @@ class _ChatPageState extends State<ChatPage> {
     _typingDebounceTimer = Timer(const Duration(seconds: 2), () {
       unawaited(_setTypingState(false));
     });
+  }
+
+  void _onMessagesScroll() {
+    if (!_messagesScrollController.hasClients) {
+      return;
+    }
+    final position = _messagesScrollController.position;
+    final distanceToBottom = position.maxScrollExtent - position.pixels;
+    _isNearMessagesBottom = distanceToBottom <= _autoScrollThresholdPx;
+  }
+
+  void _maybeAutoScrollToLatest(ChatThreadState state) {
+    if (state.messages.isEmpty) {
+      return;
+    }
+    final latest = state.messages.last;
+    final latestId = latest.id;
+    final isFirstSync = _lastObservedTailMessageId == null;
+    final hasNewTail = latestId != _lastObservedTailMessageId;
+    final hasMoreMessages = state.messages.length > _lastObservedMessagesCount;
+    final shouldScroll =
+        isFirstSync ||
+        (hasNewTail &&
+            hasMoreMessages &&
+            (_isNearMessagesBottom || latest.isMine));
+
+    _lastObservedTailMessageId = latestId;
+    _lastObservedMessagesCount = state.messages.length;
+
+    if (!shouldScroll) {
+      return;
+    }
+    unawaited(_scrollMessagesToBottom(animated: !isFirstSync));
+  }
+
+  Future<void> _scrollMessagesToBottom({required bool animated}) async {
+    await Future<void>.delayed(Duration.zero);
+    if (!mounted || !_messagesScrollController.hasClients) {
+      return;
+    }
+    final position = _messagesScrollController.position;
+    final target = position.maxScrollExtent;
+    if (!target.isFinite) {
+      return;
+    }
+
+    final distance = (target - position.pixels).abs();
+    if (distance <= 1) {
+      return;
+    }
+
+    if (!animated) {
+      _messagesScrollController.jumpTo(target);
+      return;
+    }
+
+    try {
+      await _messagesScrollController.animateTo(
+        target,
+        duration: const Duration(milliseconds: 220),
+        curve: Curves.easeOutCubic,
+      );
+    } catch (_) {
+      if (mounted && _messagesScrollController.hasClients) {
+        _messagesScrollController.jumpTo(target);
+      }
+    }
   }
 
   Future<void> _setTypingState(bool typing) async {

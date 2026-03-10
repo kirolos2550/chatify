@@ -9,6 +9,8 @@ class CallSession extends Equatable {
     required this.state,
     required this.startedAt,
     this.endedAt,
+    this.initiatorId,
+    this.answeredByUserId,
   });
 
   final String callId;
@@ -17,6 +19,8 @@ class CallSession extends Equatable {
   final CallState state;
   final DateTime startedAt;
   final DateTime? endedAt;
+  final String? initiatorId;
+  final String? answeredByUserId;
 
   @override
   List<Object?> get props => [
@@ -26,5 +30,7 @@ class CallSession extends Equatable {
     state,
     startedAt,
     endedAt,
+    initiatorId,
+    answeredByUserId,
   ];
 }
