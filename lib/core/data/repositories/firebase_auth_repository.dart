@@ -189,6 +189,7 @@ class FirebaseAuthRepository implements AuthRepository {
         about: about,
         avatarUrl: avatarUrl,
       );
+      await user.reload();
       return const Success(null);
     } catch (e) {
       return FailureResult(Failure(e.toString()));

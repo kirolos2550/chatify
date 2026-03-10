@@ -29,12 +29,11 @@ class ConversationRepositoryImpl implements ConversationRepository {
           .collection(FirebasePaths.conversations)
           .where('memberIds', arrayContains: uid)
           .snapshots()
-          .map((snapshot) {
-            final conversations =
-                snapshot.docs
-                    .map((doc) => _fromDoc(doc, currentUserId: uid))
-                    .toList()
-                  ..sort(_compareByActivityDesc);
+          .asyncMap((snapshot) async {
+            final conversations = await Future.wait(
+              snapshot.docs.map((doc) => _fromDoc(doc, currentUserId: uid)),
+            );
+            conversations.sort(_compareByActivityDesc);
             return conversations;
           });
     });
@@ -272,21 +271,45 @@ class ConversationRepositoryImpl implements ConversationRepository {
     }
   }
 
-  Conversation _fromDoc(
+  Future<Conversation> _fromDoc(
     DocumentSnapshot<Map<String, dynamic>> doc, {
     required String currentUserId,
-  }) {
+  }) async {
     final data = doc.data() ?? {};
     final type = (data['type'] as String?) == 'group'
         ? ConversationType.group
         : ConversationType.direct;
     final archivedByUsers = _asStringSet(data['archivedByUserIds']);
     final pinnedByUsers = _asStringSet(data['pinnedByUserIds']);
+    final memberIds = _asStringSet(data['memberIds']);
+    var resolvedTitle = (data['title'] as String?)?.trim();
+    var resolvedAvatarUrl = (data['avatarUrl'] as String?)?.trim();
+
+    if (type == ConversationType.direct) {
+      final peerUserId = _resolvePeerUserIdFromMembers(
+        memberIds: memberIds,
+        currentUserId: currentUserId,
+      );
+      if (peerUserId != null) {
+        final peerProfile = await _loadUserProfile(peerUserId);
+        if ((resolvedTitle == null || resolvedTitle.isEmpty) &&
+            peerProfile?.displayName != null &&
+            peerProfile!.displayName!.isNotEmpty) {
+          resolvedTitle = peerProfile.displayName;
+        }
+        if ((resolvedAvatarUrl == null || resolvedAvatarUrl.isEmpty) &&
+            peerProfile?.avatarUrl != null &&
+            peerProfile!.avatarUrl!.isNotEmpty) {
+          resolvedAvatarUrl = peerProfile.avatarUrl;
+        }
+      }
+    }
+
     return Conversation(
       id: doc.id,
       type: type,
-      title: data['title'] as String?,
-      avatarUrl: data['avatarUrl'] as String?,
+      title: resolvedTitle?.isEmpty ?? true ? null : resolvedTitle,
+      avatarUrl: resolvedAvatarUrl?.isEmpty ?? true ? null : resolvedAvatarUrl,
       createdAt: _fromMillis(data['createdAt']),
       updatedAt: _fromMillis(data['updatedAt']),
       lastMessageId: data['lastMessageId'] as String?,
@@ -389,6 +412,42 @@ class ConversationRepositoryImpl implements ConversationRepository {
     return value.whereType<String>().toSet();
   }
 
+  String? _resolvePeerUserIdFromMembers({
+    required Set<String> memberIds,
+    required String currentUserId,
+  }) {
+    for (final memberId in memberIds) {
+      if (memberId != currentUserId && memberId.trim().isNotEmpty) {
+        return memberId;
+      }
+    }
+    return null;
+  }
+
+  Future<_UserProfileSummary?> _loadUserProfile(String userId) async {
+    try {
+      final snapshot = await _firestore
+          .collection(FirebasePaths.users)
+          .doc(userId)
+          .get();
+      if (!snapshot.exists) {
+        return null;
+      }
+      final data = snapshot.data() ?? const <String, dynamic>{};
+      final displayName = (data['displayName'] as String?)?.trim();
+      final phone = (data['phone'] as String?)?.trim();
+      final avatarUrl = (data['avatarUrl'] as String?)?.trim();
+      return _UserProfileSummary(
+        displayName: (displayName != null && displayName.isNotEmpty)
+            ? displayName
+            : phone,
+        avatarUrl: avatarUrl,
+      );
+    } catch (_) {
+      return null;
+    }
+  }
+
   Future<void> _deleteSubcollection(
     CollectionReference<Map<String, dynamic>> collection,
   ) async {
@@ -409,4 +468,11 @@ class ConversationRepositoryImpl implements ConversationRepository {
       }
     }
   }
+}
+
+class _UserProfileSummary {
+  const _UserProfileSummary({this.displayName, this.avatarUrl});
+
+  final String? displayName;
+  final String? avatarUrl;
 }

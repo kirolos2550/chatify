@@ -145,6 +145,30 @@ Verify token must match `WHATSAPP_VERIFY_TOKEN`.
 6. Enter phone numbers in E.164 format (example: `+2010XXXXXXXX`).
 7. After successful OTP verification, the app now auto-creates/updates `users/{uid}` in Firestore.
 
+## Latest Bug Fixes (v1.0.2+3)
+
+- Fixed overflow in message long-press actions on small screens by making the bottom sheet scrollable.
+- Fixed auth screen keyboard overflow using a keyboard-aware `SingleChildScrollView`.
+- Hardened privacy settings loading against Firestore permission errors and added rules support for `users/{uid}/privacy/*`.
+- Direct-chat titles now resolve peer display names in both chat header and chat list, with live profile update propagation.
+- Message info is now available to the sender only, and the info dialog supports Arabic labels/content when UI language is Arabic.
+- Profile edits now reflect immediately without requiring sign-out/sign-in.
+- Improved reaction picker reliability using stable Unicode emoji values.
+- Improved media/document experience:
+  - Image thumbnail rendering with full-screen preview dialog
+  - Open document/video links externally
+  - Copy attachment link action
+- Improved attachment upload reliability with storage-bucket fallback attempts and a non-resumable retry path for small file uploads.
+- Added `url_launcher` dependency for opening attachment URLs.
+
+### Firebase setup required for media uploads
+
+- Firebase Storage must be initialized in Firebase Console for project `chatify-3d844`.
+- If Storage is not initialized, uploads can fail with errors like `StorageException ... 404`.
+- After enabling Storage, deploy rules:
+  - `firebase deploy --only firestore:rules --project chatify-3d844`
+  - `firebase deploy --only storage --project chatify-3d844`
+
 ## Crashlytics
 
 - Integrated and wired in app bootstrap for:

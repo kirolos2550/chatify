@@ -31,6 +31,7 @@ import 'package:just_audio/just_audio.dart';
 import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
 import 'package:record/record.dart';
+import 'package:url_launcher/url_launcher.dart';
 import 'package:uuid/uuid.dart';
 
 final InMemoryMessageRepository _fallbackMessageRepository =
@@ -56,6 +57,8 @@ class _ChatPageState extends State<ChatPage> {
   StreamSubscription<QuerySnapshot<Map<String, dynamic>>>? _typingSubscription;
   StreamSubscription<DocumentSnapshot<Map<String, dynamic>>>?
   _peerPresenceSubscription;
+  StreamSubscription<DocumentSnapshot<Map<String, dynamic>>>?
+  _peerProfileSubscription;
   Timer? _typingDebounceTimer;
   bool _isMuted = false;
   bool _isBlocked = false;
@@ -73,10 +76,12 @@ class _ChatPageState extends State<ChatPage> {
   Duration _activeVoiceDuration = Duration.zero;
   bool _isVoicePlaying = false;
   _ChatTheme _chatTheme = _ChatTheme.defaultTheme;
+  String _conversationTitle = '';
 
   @override
   void initState() {
     super.initState();
+    _conversationTitle = _defaultConversationTitle();
     final cryptoEngine = _resolveCryptoEngine();
     final messageRepository = _resolveMessageRepository();
     final sendTextMessageUseCase = _resolveSendTextMessageUseCase(
@@ -97,6 +102,8 @@ class _ChatPageState extends State<ChatPage> {
   void didUpdateWidget(covariant ChatPage oldWidget) {
     super.didUpdateWidget(oldWidget);
     if (oldWidget.conversationId != widget.conversationId) {
+      _peerProfileSubscription?.cancel();
+      _conversationTitle = _defaultConversationTitle();
       _chatThreadCubit.start(widget.conversationId);
       unawaited(_resetVoicePlayback());
       unawaited(_initRealtimeSignals());
@@ -112,6 +119,7 @@ class _ChatPageState extends State<ChatPage> {
     _typingDebounceTimer?.cancel();
     _typingSubscription?.cancel();
     _peerPresenceSubscription?.cancel();
+    _peerProfileSubscription?.cancel();
     unawaited(_setTypingState(false));
     unawaited(_setPresence(online: false));
     _voicePositionSubscription?.cancel();
@@ -445,7 +453,7 @@ class _ChatPageState extends State<ChatPage> {
       crossAxisAlignment: CrossAxisAlignment.start,
       mainAxisSize: MainAxisSize.min,
       children: [
-        Text('Conversation ${_shortId(widget.conversationId)}'),
+        Text(_conversationTitle),
         if (subtitle != null)
           Text(subtitle, style: Theme.of(context).textTheme.bodySmall),
       ],
@@ -567,10 +575,14 @@ class _ChatPageState extends State<ChatPage> {
     if (!mounted) {
       return;
     }
+    unawaited(_refreshConversationTitle(peerUserId: peer));
     _subscribeTyping(uid);
     if (peer != null && peer != uid) {
       _subscribePeerPresence(peer);
+      _subscribePeerProfile(peer);
+      return;
     }
+    _peerProfileSubscription?.cancel();
   }
 
   void _subscribeTyping(String currentUid) {
@@ -804,6 +816,105 @@ class _ChatPageState extends State<ChatPage> {
     }
     final current = _resolveCurrentUserId();
     return <String>{current}.toList(growable: false);
+  }
+
+  Future<void> _refreshConversationTitle({String? peerUserId}) async {
+    final fallbackTitle = _defaultConversationTitle();
+    if (Firebase.apps.isEmpty) {
+      if (!mounted) {
+        return;
+      }
+      setState(() => _conversationTitle = fallbackTitle);
+      return;
+    }
+
+    try {
+      final doc = await FirebaseFirestore.instance
+          .collection(FirebasePaths.conversations)
+          .doc(widget.conversationId)
+          .get();
+      final data = doc.data() ?? const <String, dynamic>{};
+      final explicitTitle = (data['title'] as String?)?.trim();
+      if (explicitTitle != null && explicitTitle.isNotEmpty) {
+        if (mounted) {
+          setState(() => _conversationTitle = explicitTitle);
+        }
+        return;
+      }
+
+      final isGroup = (data['type'] as String?) == 'group';
+      if (isGroup) {
+        if (mounted) {
+          setState(
+            () =>
+                _conversationTitle = 'Group ${_shortId(widget.conversationId)}',
+          );
+        }
+        return;
+      }
+
+      final currentUserId = _resolveCurrentUserId();
+      final candidatePeer =
+          peerUserId ??
+          _toStringList(
+            data['memberIds'],
+          ).firstWhere((id) => id != currentUserId, orElse: () => '');
+      if (candidatePeer.isEmpty) {
+        if (mounted) {
+          setState(() => _conversationTitle = fallbackTitle);
+        }
+        return;
+      }
+
+      final peerSnapshot = await FirebaseFirestore.instance
+          .collection(FirebasePaths.users)
+          .doc(candidatePeer)
+          .get();
+      final peerData = peerSnapshot.data() ?? const <String, dynamic>{};
+      final peerName = (peerData['displayName'] as String?)?.trim();
+      final peerPhone = (peerData['phone'] as String?)?.trim();
+      final resolvedPeerTitle = (peerName != null && peerName.isNotEmpty)
+          ? peerName
+          : peerPhone;
+      if (mounted) {
+        setState(
+          () => _conversationTitle =
+              (resolvedPeerTitle == null || resolvedPeerTitle.isEmpty)
+              ? fallbackTitle
+              : resolvedPeerTitle,
+        );
+      }
+    } catch (_) {
+      if (!mounted) {
+        return;
+      }
+      setState(() => _conversationTitle = fallbackTitle);
+    }
+  }
+
+  void _subscribePeerProfile(String peerUid) {
+    _peerProfileSubscription?.cancel();
+    _peerProfileSubscription = FirebaseFirestore.instance
+        .collection(FirebasePaths.users)
+        .doc(peerUid)
+        .snapshots()
+        .listen((snapshot) {
+          final data = snapshot.data() ?? const <String, dynamic>{};
+          final name = (data['displayName'] as String?)?.trim();
+          final phone = (data['phone'] as String?)?.trim();
+          final title = (name != null && name.isNotEmpty) ? name : phone;
+          if (!mounted || title == null || title.isEmpty) {
+            return;
+          }
+          setState(() => _conversationTitle = title);
+        });
+  }
+
+  List<String> _toStringList(Object? value) {
+    if (value is! List) {
+      return const <String>[];
+    }
+    return value.whereType<String>().toList(growable: false);
   }
 
   Future<void> _createGroupFromCurrentChat() async {
@@ -1239,6 +1350,12 @@ class _ChatPageState extends State<ChatPage> {
     }
     final file = picked.files.single;
     final downloadUrl = await _uploadAttachment(file, type);
+    if (downloadUrl == null || downloadUrl.isEmpty) {
+      if (mounted) {
+        _showSnack('Failed to upload ${type.name} file');
+      }
+      return;
+    }
     final payload = jsonEncode({
       'name': file.name,
       'size': file.size,
@@ -1441,6 +1558,10 @@ class _ChatPageState extends State<ChatPage> {
         extension: extension,
         type: MessageType.voice,
       );
+      if (downloadUrl == null || downloadUrl.isEmpty) {
+        _showSnack('Failed to upload voice note');
+        return;
+      }
       final payload = jsonEncode({
         'name': fileName,
         'durationSec': durationSec,
@@ -1673,18 +1794,17 @@ class _ChatPageState extends State<ChatPage> {
     try {
       final timestamp = DateTime.now().millisecondsSinceEpoch;
       final safeName = file.name.replaceAll(RegExp(r'[^\w\.\-]'), '_');
-      final ref = FirebaseStorage.instance.ref().child(
-        'media/$uid/${widget.conversationId}/$timestamp-$safeName',
-      );
+      final storagePath =
+          'media/$uid/${widget.conversationId}/$timestamp-$safeName';
       final metadata = SettableMetadata(
         contentType: _contentTypeFor(type, file.extension),
       );
-      if (bytes != null) {
-        await ref.putData(bytes, metadata);
-      } else {
-        await ref.putFile(File(filePath!), metadata);
-      }
-      return await ref.getDownloadURL();
+      return _uploadToStoragePath(
+        storagePath: storagePath,
+        metadata: metadata,
+        bytes: bytes,
+        filePath: filePath,
+      );
     } catch (_) {
       return null;
     }
@@ -1707,16 +1827,102 @@ class _ChatPageState extends State<ChatPage> {
     try {
       final timestamp = DateTime.now().millisecondsSinceEpoch;
       final safeName = fileName.replaceAll(RegExp(r'[^\w\.\-]'), '_');
-      final ref = FirebaseStorage.instance.ref().child(
-        'media/$uid/${widget.conversationId}/$timestamp-$safeName',
+      final storagePath =
+          'media/$uid/${widget.conversationId}/$timestamp-$safeName';
+      return _uploadToStoragePath(
+        storagePath: storagePath,
+        metadata: SettableMetadata(
+          contentType: _contentTypeFor(type, extension),
+        ),
+        filePath: filePath,
       );
-      await ref.putFile(
-        File(filePath),
-        SettableMetadata(contentType: _contentTypeFor(type, extension)),
-      );
-      return await ref.getDownloadURL();
     } catch (_) {
       return null;
+    }
+  }
+
+  Future<String?> _uploadToStoragePath({
+    required String storagePath,
+    required SettableMetadata metadata,
+    List<int>? bytes,
+    String? filePath,
+  }) async {
+    final storages = _storageCandidates();
+    for (final storage in storages) {
+      final ref = storage.ref().child(storagePath);
+      try {
+        await _putObject(
+          ref: ref,
+          metadata: metadata,
+          bytes: bytes,
+          filePath: filePath,
+        );
+        return await ref.getDownloadURL();
+      } catch (_) {
+        // Try next storage candidate.
+      }
+    }
+    return null;
+  }
+
+  List<FirebaseStorage> _storageCandidates() {
+    final candidates = <FirebaseStorage>[FirebaseStorage.instance];
+    if (Firebase.apps.isEmpty) {
+      return candidates;
+    }
+
+    final configuredBucket = Firebase.app().options.storageBucket;
+    if (configuredBucket == null || configuredBucket.isEmpty) {
+      return candidates;
+    }
+
+    final bucketNames = <String>{configuredBucket};
+    if (configuredBucket.endsWith('.firebasestorage.app')) {
+      bucketNames.add(
+        configuredBucket.replaceFirst('.firebasestorage.app', '.appspot.com'),
+      );
+    } else if (configuredBucket.endsWith('.appspot.com')) {
+      bucketNames.add(
+        configuredBucket.replaceFirst('.appspot.com', '.firebasestorage.app'),
+      );
+    }
+
+    for (final bucket in bucketNames) {
+      try {
+        candidates.add(FirebaseStorage.instanceFor(bucket: 'gs://$bucket'));
+      } catch (_) {
+        // Ignore invalid candidate buckets.
+      }
+    }
+    return candidates;
+  }
+
+  Future<void> _putObject({
+    required Reference ref,
+    required SettableMetadata metadata,
+    List<int>? bytes,
+    String? filePath,
+  }) async {
+    if (bytes != null) {
+      await ref.putData(Uint8List.fromList(bytes), metadata);
+      return;
+    }
+
+    if (filePath == null || filePath.isEmpty) {
+      throw StateError('Missing attachment file path');
+    }
+
+    final file = File(filePath);
+    try {
+      await ref.putFile(file, metadata);
+    } catch (_) {
+      // Retry with a non-resumable upload path for devices that fail resumable sessions.
+      final fileSize = await file.length();
+      if (fileSize > 20 * 1024 * 1024) {
+        rethrow;
+      }
+      final fallbackBytes = await file.readAsBytes();
+      await ref.putData(fallbackBytes, metadata);
     }
   }
 
@@ -1740,77 +1946,88 @@ class _ChatPageState extends State<ChatPage> {
       context: context,
       builder: (context) {
         return SafeArea(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              if (!message.isDeleted)
-                ListTile(
-                  leading: const Icon(Icons.reply_outlined),
-                  title: const Text('Reply'),
-                  onTap: () => Navigator.of(context).pop(_MessageAction.reply),
-                ),
-              if (!message.isDeleted)
-                ListTile(
-                  leading: const Icon(Icons.copy_outlined),
-                  title: const Text('Copy'),
-                  onTap: () => Navigator.of(context).pop(_MessageAction.copy),
-                ),
-              if (!message.isDeleted)
-                ListTile(
-                  leading: const Icon(Icons.forward_outlined),
-                  title: const Text('Forward'),
-                  onTap: () =>
-                      Navigator.of(context).pop(_MessageAction.forward),
-                ),
-              if (!message.isDeleted)
-                ListTile(
-                  leading: const Icon(Icons.emoji_emotions_outlined),
-                  title: const Text('React'),
-                  onTap: () => Navigator.of(context).pop(_MessageAction.react),
-                ),
-              if (!message.isDeleted)
-                ListTile(
-                  leading: Icon(
-                    message.isStarred ? Icons.star : Icons.star_outline,
+          child: ConstrainedBox(
+            constraints: BoxConstraints(
+              maxHeight: MediaQuery.sizeOf(context).height * 0.8,
+            ),
+            child: ListView(
+              shrinkWrap: true,
+              children: [
+                if (!message.isDeleted)
+                  ListTile(
+                    leading: const Icon(Icons.reply_outlined),
+                    title: const Text('Reply'),
+                    onTap: () =>
+                        Navigator.of(context).pop(_MessageAction.reply),
                   ),
-                  title: Text(
-                    message.isStarred
-                        ? 'Remove from starred'
-                        : 'Add to starred',
+                if (!message.isDeleted)
+                  ListTile(
+                    leading: const Icon(Icons.copy_outlined),
+                    title: const Text('Copy'),
+                    onTap: () => Navigator.of(context).pop(_MessageAction.copy),
                   ),
-                  onTap: () => Navigator.of(context).pop(_MessageAction.star),
-                ),
-              if (!message.isDeleted)
-                ListTile(
-                  leading: Icon(
-                    message.isPinned ? Icons.push_pin : Icons.push_pin_outlined,
+                if (!message.isDeleted)
+                  ListTile(
+                    leading: const Icon(Icons.forward_outlined),
+                    title: const Text('Forward'),
+                    onTap: () =>
+                        Navigator.of(context).pop(_MessageAction.forward),
                   ),
-                  title: Text(
-                    message.isPinned ? 'Unpin message' : 'Pin message',
+                if (!message.isDeleted)
+                  ListTile(
+                    leading: const Icon(Icons.emoji_emotions_outlined),
+                    title: const Text('React'),
+                    onTap: () =>
+                        Navigator.of(context).pop(_MessageAction.react),
                   ),
-                  onTap: () => Navigator.of(context).pop(_MessageAction.pin),
-                ),
-              ListTile(
-                leading: const Icon(Icons.info_outline),
-                title: const Text('Info'),
-                onTap: () => Navigator.of(context).pop(_MessageAction.info),
-              ),
-              if (message.isMine &&
-                  !message.isDeleted &&
-                  (message.type == MessageType.text ||
-                      message.type == MessageType.system))
-                ListTile(
-                  leading: const Icon(Icons.edit_outlined),
-                  title: const Text('Edit'),
-                  onTap: () => Navigator.of(context).pop(_MessageAction.edit),
-                ),
-              if (!message.isDeleted)
-                ListTile(
-                  leading: const Icon(Icons.delete_outline),
-                  title: const Text('Delete'),
-                  onTap: () => Navigator.of(context).pop(_MessageAction.delete),
-                ),
-            ],
+                if (!message.isDeleted)
+                  ListTile(
+                    leading: Icon(
+                      message.isStarred ? Icons.star : Icons.star_outline,
+                    ),
+                    title: Text(
+                      message.isStarred
+                          ? 'Remove from starred'
+                          : 'Add to starred',
+                    ),
+                    onTap: () => Navigator.of(context).pop(_MessageAction.star),
+                  ),
+                if (!message.isDeleted)
+                  ListTile(
+                    leading: Icon(
+                      message.isPinned
+                          ? Icons.push_pin
+                          : Icons.push_pin_outlined,
+                    ),
+                    title: Text(
+                      message.isPinned ? 'Unpin message' : 'Pin message',
+                    ),
+                    onTap: () => Navigator.of(context).pop(_MessageAction.pin),
+                  ),
+                if (message.isMine)
+                  ListTile(
+                    leading: const Icon(Icons.info_outline),
+                    title: Text(_localizedInfoLabel()),
+                    onTap: () => Navigator.of(context).pop(_MessageAction.info),
+                  ),
+                if (message.isMine &&
+                    !message.isDeleted &&
+                    (message.type == MessageType.text ||
+                        message.type == MessageType.system))
+                  ListTile(
+                    leading: const Icon(Icons.edit_outlined),
+                    title: const Text('Edit'),
+                    onTap: () => Navigator.of(context).pop(_MessageAction.edit),
+                  ),
+                if (!message.isDeleted)
+                  ListTile(
+                    leading: const Icon(Icons.delete_outline),
+                    title: const Text('Delete'),
+                    onTap: () =>
+                        Navigator.of(context).pop(_MessageAction.delete),
+                  ),
+              ],
+            ),
           ),
         );
       },
@@ -1865,12 +2082,12 @@ class _ChatPageState extends State<ChatPage> {
               title: const Text('Remove my reaction'),
               onTap: () => Navigator.of(context).pop(''),
             ),
-            _buildReactionOption(context, '👍'),
-            _buildReactionOption(context, '❤️'),
-            _buildReactionOption(context, '😂'),
-            _buildReactionOption(context, '😮'),
-            _buildReactionOption(context, '😢'),
-            _buildReactionOption(context, '🙏'),
+            _buildReactionOption(context, '\u{1F44D}'),
+            _buildReactionOption(context, '\u2764\uFE0F'),
+            _buildReactionOption(context, '\u{1F602}'),
+            _buildReactionOption(context, '\u{1F62E}'),
+            _buildReactionOption(context, '\u{1F622}'),
+            _buildReactionOption(context, '\u{1F64F}'),
           ],
         ),
       ),
@@ -2021,7 +2238,7 @@ class _ChatPageState extends State<ChatPage> {
             itemBuilder: (context, index) {
               final conversation = options[index];
               return ListTile(
-                title: Text(_conversationTitle(conversation)),
+                title: Text(_conversationLabel(conversation)),
                 subtitle: Text(conversation.id),
                 onTap: () => Navigator.of(context).pop(conversation.id),
               );
@@ -2033,28 +2250,50 @@ class _ChatPageState extends State<ChatPage> {
   }
 
   Future<void> _showMessageInfo(ChatMessageView message) async {
+    if (!message.isMine) {
+      _showSnack(
+        _isArabicUi()
+            ? 'معلومات الرسالة للمرسل فقط'
+            : 'Message info is available only for sender',
+      );
+      return;
+    }
     final sentAt = message.sentAt.toString();
     final editedAt = message.editedAt?.toString() ?? '-';
     final deletedAt = message.deletedForAllAt?.toString() ?? '-';
+    final reactions = message.reactionsByUser.values.isEmpty
+        ? '-'
+        : message.reactionsByUser.values.join(' ');
+    final isArabic = _isArabicUi();
     await showDialog<void>(
       context: context,
       builder: (context) => AlertDialog(
-        title: const Text('Message info'),
+        title: Text(isArabic ? 'معلومات الرسالة' : 'Message info'),
         content: SelectableText(
-          'Message ID: ${message.id}\n'
-          'Sender ID: ${message.senderId}\n'
-          'Sent at: $sentAt\n'
-          'Edited at: $editedAt\n'
-          'Deleted at: $deletedAt\n'
-          'Reply to: ${message.replyToMessageId ?? '-'}\n'
-          'Starred: ${message.isStarred}\n'
-          'Pinned: ${message.isPinned}\n'
-          'Reactions: ${message.reactionsByUser.values.join(', ')}',
+          isArabic
+              ? 'معرّف الرسالة: ${message.id}\n'
+                    'معرّف المرسل: ${message.senderId}\n'
+                    'وقت الإرسال: $sentAt\n'
+                    'وقت التعديل: $editedAt\n'
+                    'وقت الحذف: $deletedAt\n'
+                    'الرد على: ${message.replyToMessageId ?? '-'}\n'
+                    'مميّزة: ${message.isStarred ? 'نعم' : 'لا'}\n'
+                    'مثبتة: ${message.isPinned ? 'نعم' : 'لا'}\n'
+                    'التفاعلات: $reactions'
+              : 'Message ID: ${message.id}\n'
+                    'Sender ID: ${message.senderId}\n'
+                    'Sent at: $sentAt\n'
+                    'Edited at: $editedAt\n'
+                    'Deleted at: $deletedAt\n'
+                    'Reply to: ${message.replyToMessageId ?? '-'}\n'
+                    'Starred: ${message.isStarred}\n'
+                    'Pinned: ${message.isPinned}\n'
+                    'Reactions: $reactions',
         ),
         actions: [
           TextButton(
             onPressed: () => Navigator.of(context).pop(),
-            child: const Text('Close'),
+            child: Text(isArabic ? 'إغلاق' : 'Close'),
           ),
         ],
       ),
@@ -2109,7 +2348,9 @@ class _ChatPageState extends State<ChatPage> {
           _ => Icons.description_outlined,
         };
         final title = payload?['name']?.toString() ?? message.type.name;
-        final url = payload?['url']?.toString();
+        final url = payload?['url']?.toString().trim();
+        final hasUrl = url != null && url.isNotEmpty;
+        final attachmentUrl = url ?? '';
         return Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
@@ -2127,14 +2368,63 @@ class _ChatPageState extends State<ChatPage> {
                 ),
               ],
             ),
-            if (url != null && url.isNotEmpty)
+            if (message.type == MessageType.image && hasUrl)
               Padding(
-                padding: const EdgeInsets.only(top: 4),
-                child: Text(
-                  url,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: Theme.of(context).textTheme.bodySmall,
+                padding: const EdgeInsets.only(top: 8),
+                child: GestureDetector(
+                  onTap: () => _showImagePreview(attachmentUrl),
+                  child: ClipRRect(
+                    borderRadius: BorderRadius.circular(10),
+                    child: Image.network(
+                      attachmentUrl,
+                      width: 220,
+                      height: 140,
+                      fit: BoxFit.cover,
+                      errorBuilder: (context, error, stackTrace) {
+                        return _buildAttachmentErrorTile(
+                          icon: Icons.broken_image_outlined,
+                          message: 'Image preview is unavailable',
+                        );
+                      },
+                    ),
+                  ),
+                ),
+              )
+            else if (hasUrl)
+              Padding(
+                padding: const EdgeInsets.only(top: 8),
+                child: Wrap(
+                  spacing: 6,
+                  runSpacing: 6,
+                  children: [
+                    OutlinedButton.icon(
+                      onPressed: () => _openAttachmentUrl(attachmentUrl),
+                      icon: Icon(
+                        message.type == MessageType.file
+                            ? Icons.description_outlined
+                            : Icons.play_circle_outline,
+                      ),
+                      label: Text(
+                        message.type == MessageType.file
+                            ? 'Open document'
+                            : 'Open video',
+                      ),
+                    ),
+                    OutlinedButton.icon(
+                      onPressed: () =>
+                          Clipboard.setData(ClipboardData(text: attachmentUrl)),
+                      icon: const Icon(Icons.copy_outlined),
+                      label: const Text('Copy link'),
+                    ),
+                  ],
+                ),
+              )
+            else
+              Padding(
+                padding: const EdgeInsets.only(top: 6),
+                child: _buildAttachmentErrorTile(
+                  icon: Icons.cloud_off_outlined,
+                  message: 'Attachment link is unavailable',
                 ),
               ),
           ],
@@ -2177,6 +2467,71 @@ class _ChatPageState extends State<ChatPage> {
             ),
           )
           .toList(growable: false),
+    );
+  }
+
+  Future<void> _openAttachmentUrl(String rawUrl) async {
+    final uri = Uri.tryParse(rawUrl.trim());
+    if (uri == null || (!uri.hasScheme && !uri.hasAuthority)) {
+      _showSnack('Attachment link is invalid');
+      return;
+    }
+    try {
+      final launched = await launchUrl(
+        uri,
+        mode: LaunchMode.externalApplication,
+      );
+      if (!launched) {
+        _showSnack('Unable to open attachment');
+      }
+    } catch (_) {
+      _showSnack('Unable to open attachment');
+    }
+  }
+
+  Future<void> _showImagePreview(String rawUrl) async {
+    await showDialog<void>(
+      context: context,
+      builder: (context) => Dialog(
+        insetPadding: const EdgeInsets.all(12),
+        child: InteractiveViewer(
+          minScale: 0.8,
+          maxScale: 4,
+          child: Image.network(
+            rawUrl,
+            fit: BoxFit.contain,
+            errorBuilder: (context, error, stackTrace) {
+              return _buildAttachmentErrorTile(
+                icon: Icons.broken_image_outlined,
+                message: 'Image preview is unavailable',
+              );
+            },
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildAttachmentErrorTile({
+    required IconData icon,
+    required String message,
+  }) {
+    return Container(
+      width: 220,
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(10),
+        color: Theme.of(context).colorScheme.surfaceContainerHighest,
+      ),
+      child: Row(
+        children: [
+          Icon(icon, size: 16),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text(message, maxLines: 2, overflow: TextOverflow.ellipsis),
+          ),
+        ],
+      ),
     );
   }
 
@@ -2356,7 +2711,11 @@ class _ChatPageState extends State<ChatPage> {
     return '${id.substring(0, 8)}...';
   }
 
-  String _conversationTitle(Conversation conversation) {
+  String _defaultConversationTitle() {
+    return 'Conversation ${_shortId(widget.conversationId)}';
+  }
+
+  String _conversationLabel(Conversation conversation) {
     final title = conversation.title?.trim();
     if (title != null && title.isNotEmpty) {
       return title;
@@ -2364,6 +2723,16 @@ class _ChatPageState extends State<ChatPage> {
     return conversation.type == ConversationType.group
         ? 'Group ${_shortId(conversation.id)}'
         : 'Direct chat ${_shortId(conversation.id)}';
+  }
+
+  bool _isArabicUi() {
+    return Localizations.localeOf(
+      context,
+    ).languageCode.toLowerCase().startsWith('ar');
+  }
+
+  String _localizedInfoLabel() {
+    return _isArabicUi() ? 'معلومات الرسالة' : 'Info';
   }
 
   void _showSnack(String message) {

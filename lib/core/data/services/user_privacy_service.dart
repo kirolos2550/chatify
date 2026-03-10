@@ -45,16 +45,26 @@ class UserPrivacyService {
     if (Firebase.apps.isEmpty) {
       return defaults();
     }
-    final snapshot = await _settingsDoc(uid).get();
-    final data = snapshot.data() ?? const <String, Object?>{};
-    return UserPrivacySettings(
-      readReceiptsEnabled: _asBool(data['readReceiptsEnabled'], fallback: true),
-      lastSeenVisible: _asBool(data['lastSeenVisible'], fallback: true),
-      typingVisibilityEnabled: _asBool(
-        data['typingVisibilityEnabled'],
-        fallback: true,
-      ),
-    );
+    try {
+      final snapshot = await _settingsDoc(uid).get();
+      final data = snapshot.data() ?? const <String, Object?>{};
+      return UserPrivacySettings(
+        readReceiptsEnabled: _asBool(
+          data['readReceiptsEnabled'],
+          fallback: true,
+        ),
+        lastSeenVisible: _asBool(data['lastSeenVisible'], fallback: true),
+        typingVisibilityEnabled: _asBool(
+          data['typingVisibilityEnabled'],
+          fallback: true,
+        ),
+      );
+    } on FirebaseException {
+      // If rules block this document, keep app behavior stable using defaults.
+      return defaults();
+    } catch (_) {
+      return defaults();
+    }
   }
 
   static Future<void> updateMySettings({

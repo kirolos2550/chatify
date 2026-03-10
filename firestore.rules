@@ -13,6 +13,10 @@ service cloud.firestore {
         allow read, write: if isSignedIn() && request.auth.uid == uid;
       }
 
+      match /privacy/{docId} {
+        allow read, write: if isSignedIn() && request.auth.uid == uid;
+      }
+
       match /backup/{docId} {
         allow read, write: if isSignedIn() && request.auth.uid == uid;
       }

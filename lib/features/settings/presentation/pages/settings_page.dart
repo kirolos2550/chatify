@@ -146,7 +146,10 @@ class _SettingsPageState extends State<SettingsPage> {
     if (!mounted) {
       return;
     }
-    context.push('/profile/${Uri.encodeComponent(uid)}');
+    await context.push('/profile/${Uri.encodeComponent(uid)}');
+    if (mounted) {
+      setState(() {});
+    }
   }
 
   Future<void> _changeLanguage() async {

@@ -43,23 +43,17 @@ class _AuthPageState extends State<AuthPage> {
     if (authCubit == null) {
       return Scaffold(
         appBar: AppBar(title: const Text('Sign in')),
-        body: Padding(
-          padding: const EdgeInsets.all(20),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              const Text(
-                'Auth dependencies are not configured in this runtime.',
+        body: _buildScrollableBody(
+          children: [
+            const Text('Auth dependencies are not configured in this runtime.'),
+            if (_allowDemoMode) ...[
+              const SizedBox(height: 16),
+              FilledButton(
+                onPressed: () => context.go('/home/chats'),
+                child: const Text('Continue in demo mode'),
               ),
-              if (_allowDemoMode) ...[
-                const SizedBox(height: 16),
-                FilledButton(
-                  onPressed: () => context.go('/home/chats'),
-                  child: const Text('Continue in demo mode'),
-                ),
-              ],
             ],
-          ),
+          ],
         ),
       );
     }
@@ -81,8 +75,7 @@ class _AuthPageState extends State<AuthPage> {
             context.go('/home/chats');
             return;
           }
-          if (state.status == AuthStatus.error &&
-              state.errorMessage != null) {
+          if (state.status == AuthStatus.error && state.errorMessage != null) {
             ScaffoldMessenger.of(
               context,
             ).showSnackBar(SnackBar(content: Text(state.errorMessage!)));
@@ -99,79 +92,105 @@ class _AuthPageState extends State<AuthPage> {
 
           return Scaffold(
             appBar: AppBar(title: const Text('Sign in')),
-            body: Padding(
-              padding: const EdgeInsets.all(20),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                  TextField(
-                    controller: _phoneController,
-                    keyboardType: TextInputType.phone,
-                    enabled: !sendingCode && !verifyingCode,
-                    decoration: const InputDecoration(
-                      labelText: 'Phone number',
-                      hintText: '+2010XXXXXXXX',
-                    ),
+            body: _buildScrollableBody(
+              children: [
+                TextField(
+                  controller: _phoneController,
+                  keyboardType: TextInputType.phone,
+                  enabled: !sendingCode && !verifyingCode,
+                  decoration: const InputDecoration(
+                    labelText: 'Phone number',
+                    hintText: '+2010XXXXXXXX',
                   ),
-                  const SizedBox(height: 8),
+                ),
+                const SizedBox(height: 8),
+                const Text(
+                  'Use international format (E.164), for example +2010...',
+                  style: TextStyle(fontSize: 12),
+                ),
+                const SizedBox(height: 16),
+                FilledButton(
+                  onPressed: sendingCode || verifyingCode
+                      ? null
+                      : () => context.read<AuthCubit>().requestOtp(
+                          _phoneController.text,
+                        ),
+                  child: Text(sendingCode ? 'Sending...' : 'Send OTP'),
+                ),
+                if (kDebugMode && _useFirebaseEmulators) ...[
+                  const SizedBox(height: 12),
                   const Text(
-                    'Use international format (E.164), for example +2010...',
+                    'You are running with Firebase emulators. '
+                    'To verify real phone numbers, run with '
+                    '--dart-define=USE_FIREBASE_EMULATORS=false.',
                     style: TextStyle(fontSize: 12),
                   ),
-                  const SizedBox(height: 16),
-                  FilledButton(
-                    onPressed: sendingCode || verifyingCode
-                        ? null
-                        : () => context.read<AuthCubit>().requestOtp(
-                            _phoneController.text,
-                          ),
-                    child: Text(sendingCode ? 'Sending...' : 'Send OTP'),
-                  ),
-                  if (kDebugMode && _useFirebaseEmulators) ...[
-                    const SizedBox(height: 12),
-                    const Text(
-                      'You are running with Firebase emulators. '
-                      'To verify real phone numbers, run with '
-                      '--dart-define=USE_FIREBASE_EMULATORS=false.',
-                      style: TextStyle(fontSize: 12),
-                    ),
-                  ],
-                  if (showOtpInput) ...[
-                    const SizedBox(height: 24),
-                    TextField(
-                      controller: _otpController,
-                      keyboardType: TextInputType.number,
-                      textInputAction: TextInputAction.done,
-                      enabled: !verifyingCode,
-                      maxLength: 6,
-                      decoration: const InputDecoration(
-                        labelText: 'OTP code',
-                        hintText: '123456',
-                        counterText: '',
-                      ),
-                      onSubmitted: (_) => context.read<AuthCubit>().verifyOtp(
-                        _otpController.text,
-                      ),
-                    ),
-                    const SizedBox(height: 12),
-                    FilledButton(
-                      onPressed: verifyingCode
-                          ? null
-                          : () => context.read<AuthCubit>().verifyOtp(
-                              _otpController.text,
-                            ),
-                      child: Text(
-                        verifyingCode ? 'Verifying...' : 'Verify OTP',
-                      ),
-                    ),
-                  ],
-                  const Spacer(),
-                  if (_allowDemoMode)
-                    TextButton(
-                      onPressed: () => context.go('/home/chats'),
-                      child: const Text('Continue in demo mode'),
-                    ),
                 ],
+                if (showOtpInput) ...[
+                  const SizedBox(height: 24),
+                  TextField(
+                    controller: _otpController,
+                    keyboardType: TextInputType.number,
+                    textInputAction: TextInputAction.done,
+                    enabled: !verifyingCode,
+                    maxLength: 6,
+                    decoration: const InputDecoration(
+                      labelText: 'OTP code',
+                      hintText: '123456',
+                      counterText: '',
+                    ),
+                    onSubmitted: (_) => context.read<AuthCubit>().verifyOtp(
+                      _otpController.text,
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  FilledButton(
+                    onPressed: verifyingCode
+                        ? null
+                        : () => context.read<AuthCubit>().verifyOtp(
+                            _otpController.text,
+                          ),
+                    child: Text(verifyingCode ? 'Verifying...' : 'Verify OTP'),
+                  ),
+                ],
+                if (_allowDemoMode) ...[
+                  const SizedBox(height: 24),
+                  TextButton(
+                    onPressed: () => context.go('/home/chats'),
+                    child: const Text('Continue in demo mode'),
+                  ),
+                ],
+              ],
+            ),
+          );
+        },
+      ),
+    );
+  }
+
+  Widget _buildScrollableBody({required List<Widget> children}) {
+    final mediaQuery = MediaQuery.of(context);
+    return SafeArea(
+      child: LayoutBuilder(
+        builder: (context, constraints) {
+          return SingleChildScrollView(
+            padding: EdgeInsets.fromLTRB(
+              20,
+              20,
+              20,
+              20 + mediaQuery.viewInsets.bottom,
+            ),
+            keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
+            child: ConstrainedBox(
+              constraints: BoxConstraints(
+                minHeight: (constraints.maxHeight - 40)
+                    .clamp(0.0, double.infinity)
+                    .toDouble(),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                mainAxisSize: MainAxisSize.min,
+                children: children,
               ),
             ),
           );
