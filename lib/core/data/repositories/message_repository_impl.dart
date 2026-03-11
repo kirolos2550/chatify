@@ -45,9 +45,10 @@ class MessageRepositoryImpl implements MessageRepository {
     required Message message,
   }) async {
     try {
-      await _firestore
+      final conversationRef = _firestore
           .collection(FirebasePaths.conversations)
-          .doc(conversationId)
+          .doc(conversationId);
+      await conversationRef
           .collection(FirebasePaths.messages)
           .doc(message.id)
           .set({
@@ -67,6 +68,30 @@ class MessageRepositoryImpl implements MessageRepository {
             'pinnedByUserIds': const <String>[],
             'reactionsByUser': const <String, String>{},
           });
+
+      final conversationSnapshot = await conversationRef.get();
+      final conversationData =
+          conversationSnapshot.data() ?? const <String, dynamic>{};
+      final membersRaw = conversationData['memberIds'];
+      final members = membersRaw is List
+          ? membersRaw
+                .whereType<String>()
+                .map((id) => id.trim())
+                .where((id) => id.isNotEmpty)
+                .toSet()
+          : <String>{};
+      final unreadUpdate = <String, Object?>{
+        'updatedAt': DateTime.now().millisecondsSinceEpoch,
+        'lastMessageId': message.id,
+        'unreadCountByUser.${message.senderId}': 0,
+      };
+      for (final memberId in members) {
+        if (memberId == message.senderId) {
+          continue;
+        }
+        unreadUpdate['unreadCountByUser.$memberId'] = FieldValue.increment(1);
+      }
+      await conversationRef.set(unreadUpdate, SetOptions(merge: true));
 
       await _db
           .into(_db.messagesTable)
@@ -225,6 +250,13 @@ class MessageRepositoryImpl implements MessageRepository {
           .get();
 
       if (snapshot.docs.isEmpty) {
+        await _firestore
+            .collection(FirebasePaths.conversations)
+            .doc(conversationId)
+            .set({
+              'unreadCountByUser.$userId': 0,
+              'updatedAt': DateTime.now().millisecondsSinceEpoch,
+            }, SetOptions(merge: true));
         return const Success(null);
       }
 
@@ -262,6 +294,14 @@ class MessageRepositoryImpl implements MessageRepository {
       if (updates > 0) {
         await batch.commit();
       }
+
+      await _firestore
+          .collection(FirebasePaths.conversations)
+          .doc(conversationId)
+          .set({
+            'unreadCountByUser.$userId': 0,
+            'updatedAt': DateTime.now().millisecondsSinceEpoch,
+          }, SetOptions(merge: true));
       return const Success(null);
     } catch (e, stackTrace) {
       return FailureResult(

@@ -55,6 +55,7 @@ class _ChatListPageState extends State<ChatListPage> {
         showDemoHint: true,
         showArchivedOnly: false,
         archivedCount: 0,
+        totalUnreadCount: 0,
         onOpenConversation: (id) => context.push('/chat/$id'),
         onConversationLongPress: (_) {},
         onSearch: () => context.push('/search'),
@@ -86,12 +87,17 @@ class _ChatListPageState extends State<ChatListPage> {
               .where((item) => item.isArchived)
               .toList();
           final items = _showArchivedOnly ? archivedItems : activeItems;
+          final totalUnreadCount = activeItems.fold<int>(
+            0,
+            (total, item) => total + item.unreadCount,
+          );
           return _ChatsScaffold(
             items: items,
             loading: state.loading,
             showDemoHint: false,
             showArchivedOnly: _showArchivedOnly,
             archivedCount: archivedItems.length,
+            totalUnreadCount: totalUnreadCount,
             emptyMessage: _showArchivedOnly
                 ? 'No archived conversations.'
                 : 'No conversations yet. Create one to start chatting.',
@@ -127,6 +133,7 @@ class _ChatListPageState extends State<ChatListPage> {
       subtitle: subtitle,
       conversationId: conversation.id,
       trailing: trailing,
+      unreadCount: conversation.unreadCount,
       isArchived: conversation.isArchived,
       isPinned: conversation.isPinned,
     );
@@ -458,6 +465,7 @@ class _ChatsScaffold extends StatelessWidget {
     required this.showDemoHint,
     required this.showArchivedOnly,
     required this.archivedCount,
+    required this.totalUnreadCount,
     this.emptyMessage,
     required this.onOpenConversation,
     required this.onConversationLongPress,
@@ -471,6 +479,7 @@ class _ChatsScaffold extends StatelessWidget {
   final bool showDemoHint;
   final bool showArchivedOnly;
   final int archivedCount;
+  final int totalUnreadCount;
   final String? emptyMessage;
   final void Function(String id) onOpenConversation;
   final void Function(_ChatListItem item) onConversationLongPress;
@@ -480,9 +489,15 @@ class _ChatsScaffold extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final title = showArchivedOnly
+        ? 'Archived chats'
+        : totalUnreadCount > 0
+        ? 'Chats ($totalUnreadCount)'
+        : 'Chats';
+
     return Scaffold(
       appBar: AppBar(
-        title: Text(showArchivedOnly ? 'Archived chats' : 'Chats'),
+        title: Text(title),
         actions: [
           IconButton(
             onPressed: onToggleArchivedView,
@@ -524,7 +539,7 @@ class _ChatsScaffold extends StatelessWidget {
                               leading: CircleAvatar(child: Text(item.title[0])),
                               title: Text(item.title),
                               subtitle: Text(item.subtitle),
-                              trailing: _buildTrailing(item),
+                              trailing: _buildTrailing(context, item),
                               onTap: () =>
                                   onOpenConversation(item.conversationId),
                               onLongPress: () => onConversationLongPress(item),
@@ -542,9 +557,10 @@ class _ChatsScaffold extends StatelessWidget {
     );
   }
 
-  Widget? _buildTrailing(_ChatListItem item) {
+  Widget? _buildTrailing(BuildContext context, _ChatListItem item) {
     final hasTime = item.trailing.isNotEmpty;
-    if (!item.isPinned && !hasTime) {
+    final hasUnread = item.unreadCount > 0;
+    if (!item.isPinned && !hasTime && !hasUnread) {
       return null;
     }
     return Row(
@@ -553,6 +569,23 @@ class _ChatsScaffold extends StatelessWidget {
         if (item.isPinned) const Icon(Icons.push_pin, size: 16),
         if (item.isPinned && hasTime) const SizedBox(width: 4),
         if (hasTime) Text(item.trailing),
+        if ((item.isPinned || hasTime) && hasUnread) const SizedBox(width: 8),
+        if (hasUnread)
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+            decoration: BoxDecoration(
+              color: Theme.of(context).colorScheme.primary,
+              borderRadius: BorderRadius.circular(999),
+            ),
+            child: Text(
+              item.unreadCount > 99 ? '99+' : '${item.unreadCount}',
+              style: TextStyle(
+                color: Theme.of(context).colorScheme.onPrimary,
+                fontSize: 12,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+          ),
       ],
     );
   }
@@ -564,6 +597,7 @@ class _ChatListItem {
     required this.subtitle,
     required this.conversationId,
     required this.trailing,
+    this.unreadCount = 0,
     this.isArchived = false,
     this.isPinned = false,
   });
@@ -572,6 +606,7 @@ class _ChatListItem {
   final String subtitle;
   final String conversationId;
   final String trailing;
+  final int unreadCount;
   final bool isArchived;
   final bool isPinned;
 }

@@ -80,12 +80,14 @@ class ConversationRepositoryImpl implements ConversationRepository {
       final id = _uuid.v4();
       final now = DateTime.now().millisecondsSinceEpoch;
       final directKey = _buildDirectKey(uid, resolvedPeerUserId);
+      final members = <String>[uid, resolvedPeerUserId];
       await _firestore.collection(FirebasePaths.conversations).doc(id).set({
         'type': 'direct',
         'title': null,
-        'memberIds': [uid, resolvedPeerUserId],
+        'memberIds': members,
         'archivedByUserIds': const <String>[],
         'pinnedByUserIds': const <String>[],
+        'unreadCountByUser': _initialUnreadCountByUser(members),
         'directKey': directKey,
         'createdAt': now,
         'updatedAt': now,
@@ -145,6 +147,7 @@ class ConversationRepositoryImpl implements ConversationRepository {
         'memberIds': allMembers,
         'archivedByUserIds': const <String>[],
         'pinnedByUserIds': const <String>[],
+        'unreadCountByUser': _initialUnreadCountByUser(allMembers),
         'createdAt': now,
         'updatedAt': now,
       });
@@ -237,6 +240,7 @@ class ConversationRepositoryImpl implements ConversationRepository {
       await ref.set({
         'memberIds': remaining,
         'updatedAt': DateTime.now().millisecondsSinceEpoch,
+        'unreadCountByUser.$uid': FieldValue.delete(),
       }, SetOptions(merge: true));
 
       final myMemberDoc = ref.collection(FirebasePaths.members).doc(uid);
@@ -313,6 +317,11 @@ class ConversationRepositoryImpl implements ConversationRepository {
     final memberIds = _asStringSet(data['memberIds']);
     var resolvedTitle = (data['title'] as String?)?.trim();
     var resolvedAvatarUrl = (data['avatarUrl'] as String?)?.trim();
+    final unreadCount = await _resolveUnreadCount(
+      conversationId: doc.id,
+      data: data,
+      currentUserId: currentUserId,
+    );
 
     if (type == ConversationType.direct) {
       final peerUserId = _resolvePeerUserIdFromMembers(
@@ -342,6 +351,7 @@ class ConversationRepositoryImpl implements ConversationRepository {
       createdAt: _fromMillis(data['createdAt']),
       updatedAt: _fromMillis(data['updatedAt']),
       lastMessageId: data['lastMessageId'] as String?,
+      unreadCount: unreadCount,
       isArchived: archivedByUsers.contains(currentUserId),
       isPinned: pinnedByUsers.contains(currentUserId),
     );
@@ -481,6 +491,123 @@ class ConversationRepositoryImpl implements ConversationRepository {
       return const <String>{};
     }
     return value.whereType<String>().toSet();
+  }
+
+  Map<String, int> _asIntMap(Object? value) {
+    if (value is! Map) {
+      return const <String, int>{};
+    }
+    final map = <String, int>{};
+    value.forEach((rawKey, rawValue) {
+      if (rawKey is! String || rawKey.trim().isEmpty) {
+        return;
+      }
+      final resolved = switch (rawValue) {
+        int() => rawValue,
+        num() => rawValue.toInt(),
+        String() => int.tryParse(rawValue),
+        _ => null,
+      };
+      if (resolved == null) {
+        return;
+      }
+      map[rawKey] = resolved < 0 ? 0 : resolved;
+    });
+    return map;
+  }
+
+  Future<int> _resolveUnreadCount({
+    required String conversationId,
+    required Map<String, dynamic> data,
+    required String currentUserId,
+  }) async {
+    final unreadMap = _asIntMap(data['unreadCountByUser']);
+    final existingCount = unreadMap[currentUserId];
+    if (existingCount != null) {
+      return existingCount;
+    }
+
+    // Backfill for conversations created before unreadCountByUser was introduced.
+    final fallbackCount = await _countUnreadMessages(
+      conversationId: conversationId,
+      currentUserId: currentUserId,
+    );
+    try {
+      await _firestore
+          .collection(FirebasePaths.conversations)
+          .doc(conversationId)
+          .set({
+            'unreadCountByUser.$currentUserId': fallbackCount,
+          }, SetOptions(merge: true));
+    } catch (_) {
+      // Best-effort cache only.
+    }
+    return fallbackCount;
+  }
+
+  Future<int> _countUnreadMessages({
+    required String conversationId,
+    required String currentUserId,
+  }) async {
+    const batchSize = 200;
+    var unread = 0;
+    QueryDocumentSnapshot<Map<String, dynamic>>? cursor;
+    final messagesRef = _firestore
+        .collection(FirebasePaths.conversations)
+        .doc(conversationId)
+        .collection(FirebasePaths.messages);
+
+    while (true) {
+      var query = messagesRef
+          .orderBy('clientTimestamp', descending: true)
+          .limit(batchSize);
+      if (cursor != null) {
+        query = query.startAfterDocument(cursor);
+      }
+      final snapshot = await query.get();
+      if (snapshot.docs.isEmpty) {
+        break;
+      }
+
+      for (final messageDoc in snapshot.docs) {
+        final messageData = messageDoc.data();
+        final senderId = (messageData['senderId'] as String?)?.trim() ?? '';
+        if (senderId.isEmpty || senderId == currentUserId) {
+          continue;
+        }
+        if (messageData['deletedForAllAt'] != null) {
+          continue;
+        }
+        final deletedForUser = _asStringSet(messageData['deletedForUserIds']);
+        if (deletedForUser.contains(currentUserId)) {
+          continue;
+        }
+        final readByUsers = _asStringSet(messageData['readByUserIds']);
+        if (readByUsers.contains(currentUserId)) {
+          continue;
+        }
+        unread++;
+      }
+
+      cursor = snapshot.docs.last;
+      if (snapshot.docs.length < batchSize) {
+        break;
+      }
+    }
+
+    return unread;
+  }
+
+  Map<String, int> _initialUnreadCountByUser(Iterable<String> memberIds) {
+    final map = <String, int>{};
+    for (final memberId in memberIds) {
+      final id = memberId.trim();
+      if (id.isEmpty) {
+        continue;
+      }
+      map[id] = 0;
+    }
+    return map;
   }
 
   String? _resolvePeerUserIdFromMembers({

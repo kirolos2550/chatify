@@ -152,7 +152,20 @@ Verify token must match `WHATSAPP_VERIFY_TOKEN`.
 6. Enter phone numbers in E.164 format (example: `+2010XXXXXXXX`).
 7. After successful OTP verification, the app now auto-creates/updates `users/{uid}` in Firestore.
 
-## Latest Bug Fixes (v1.0.6+7)
+## Latest Bug Fixes (v1.0.7+8)
+
+- Added unread message counters in chats list UX:
+  - Shows total unread messages in chats title (`Chats (N)`).
+  - Shows per-conversation unread badge in chat rows (`99+` cap).
+- Added conversation-level unread tracking in backend sync:
+  - Introduced `unreadCountByUser` mapping in conversation documents.
+  - Increments unread counts for all recipients on send.
+  - Resets current user unread count to `0` on read.
+- Added backward-compatible unread backfill:
+  - For old conversations missing unread counters, unread count is computed from message receipts and persisted.
+- Verified full test suite passes successfully (`flutter test`).
+
+## Previous Bug Fixes (v1.0.6+7)
 
 - Fixed debug log sink close ordering so queued log lines are flushed before the sink is marked closed.
 - Fixed `Result.logIfFailure` log persistence behavior in tests by ensuring pending writes are not dropped during logger shutdown.
@@ -162,7 +175,7 @@ Verify token must match `WHATSAPP_VERIFY_TOKEN`.
   - Hardening temp-directory cleanup in teardown.
 - Verified full test suite passes successfully (`flutter test`).
 
-## Previous Bug Fixes (v1.0.5+6)
+## Older Bug Fixes (v1.0.5+6)
 
 - Added contacts-driven direct chat creation sheet:
   - Lists registered contacts already on Chatify.
@@ -192,7 +205,7 @@ Verify token must match `WHATSAPP_VERIFY_TOKEN`.
   - `MessageNotificationDecisionEngine`
   - `InAppNotificationHost`
 
-## Older Bug Fixes (v1.0.4+5)
+## Legacy Bug Fixes (v1.0.4+5)
 
 - Moved chat media uploads (images/files/voice notes) to Supabase Storage as primary provider.
 - Added runtime configuration for media storage via `SUPABASE_URL`, `SUPABASE_ANON_KEY`, and `SUPABASE_STORAGE_BUCKET`.

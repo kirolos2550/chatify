@@ -6,6 +6,7 @@ class Conversation extends Equatable {
     required this.id,
     required this.type,
     required this.createdAt,
+    this.unreadCount = 0,
     this.isArchived = false,
     this.isPinned = false,
     this.title,
@@ -21,6 +22,7 @@ class Conversation extends Equatable {
   final DateTime createdAt;
   final DateTime? updatedAt;
   final String? lastMessageId;
+  final int unreadCount;
   final bool isArchived;
   final bool isPinned;
 
@@ -33,6 +35,7 @@ class Conversation extends Equatable {
     createdAt,
     updatedAt,
     lastMessageId,
+    unreadCount,
     isArchived,
     isPinned,
   ];
