@@ -10,6 +10,7 @@ Production-oriented Flutter messaging foundation aligned with:
 - DI using get_it + injectable
 - Arabic + English localization
 - Voice notes (record, upload, play/pause, seek)
+- Unread message counters (per chat badge + total in chats title)
 - Per-user archive / unarchive chats
 - User profile pages (name, phone, avatar, shared groups)
 - Message reactions, stars, and pinned messages
@@ -55,6 +56,7 @@ functions/            # Firebase Cloud Functions endpoints
 `conversations/{conversationId}` currently contains:
 - `memberIds: string[]`
 - `archivedByUserIds: string[]` (per-user archive state)
+- `unreadCountByUser: { [uid]: number }` (per-user unread counter cache)
 - `type`, `title`, `createdAt`, `updatedAt`, etc.
 
 ## Cloud Functions Endpoints
