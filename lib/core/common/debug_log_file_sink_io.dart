@@ -142,8 +142,8 @@ class _IoDebugLogFileSink implements DebugLogFileSink {
     if (_isClosed) {
       return;
     }
-    _isClosed = true;
     await _pendingWrite;
+    _isClosed = true;
     await _closeSinkSilently();
     _sink = null;
   }
