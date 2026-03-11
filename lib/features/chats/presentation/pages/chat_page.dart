@@ -15,11 +15,13 @@ import 'package:chatify/core/crypto/signal_crypto_engine.dart';
 import 'package:chatify/core/domain/entities/conversation.dart';
 import 'package:chatify/core/domain/enums/chat_enums.dart';
 import 'package:chatify/core/domain/repositories/call_repository.dart';
+import 'package:chatify/core/domain/repositories/contacts_repository.dart';
 import 'package:chatify/core/domain/repositories/conversation_repository.dart';
 import 'package:chatify/core/domain/repositories/message_repository.dart';
 import 'package:chatify/core/network/firebase_paths.dart';
 import 'package:chatify/features/chats/domain/usecases/send_text_message_use_case.dart';
 import 'package:chatify/features/chats/presentation/bloc/chat_thread_cubit.dart';
+import 'package:chatify/features/chats/presentation/widgets/group_creation_sheet.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_core/firebase_core.dart';
@@ -1205,7 +1207,18 @@ class _ChatPageState extends State<ChatPage> {
       _showSnack(
         _tr(
           en: 'Conversation service is unavailable right now',
-          ar: 'خدمة المحادثات غير متاحة حالياً',
+          ar: 'Conversation service is unavailable right now',
+        ),
+      );
+      return;
+    }
+
+    final contactsRepository = _resolveContactsRepository();
+    if (contactsRepository == null) {
+      _showSnack(
+        _tr(
+          en: 'Contacts service is unavailable right now',
+          ar: 'Contacts service is unavailable right now',
         ),
       );
       return;
@@ -1216,101 +1229,41 @@ class _ChatPageState extends State<ChatPage> {
       return;
     }
     final currentUserId = _resolveCurrentUserId();
-    final basePeers = members.where((id) => id != currentUserId).toSet();
+    final preselectedMembers = members
+        .where((id) => id != currentUserId)
+        .toSet();
 
-    final titleController = TextEditingController();
-    final extraController = TextEditingController();
-    try {
-      final payload = await showDialog<(String, String)>(
-        context: context,
-        builder: (dialogContext) => AlertDialog(
-          title: Text(
-            _tr(
-              en: 'Create group from this chat',
-              ar: 'إنشاء مجموعة من هذه الدردشة',
-            ),
-          ),
-          content: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              TextField(
-                controller: titleController,
-                decoration: InputDecoration(
-                  labelText: _tr(en: 'Group title', ar: 'اسم المجموعة'),
-                  hintText: _tr(en: 'Project group', ar: 'مجموعة المشروع'),
-                ),
-              ),
-              const SizedBox(height: 12),
-              TextField(
-                controller: extraController,
-                decoration: InputDecoration(
-                  labelText: _tr(en: 'Add members', ar: 'إضافة أعضاء'),
-                  hintText: _tr(en: 'uid_2, uid_3', ar: 'uid_2, uid_3'),
-                ),
-              ),
-            ],
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.of(dialogContext).pop(),
-              child: Text(_tr(en: 'Cancel', ar: 'إلغاء')),
-            ),
-            FilledButton(
-              onPressed: () => Navigator.of(
-                dialogContext,
-              ).pop((titleController.text, extraController.text)),
-              child: Text(_tr(en: 'Create', ar: 'إنشاء')),
-            ),
-          ],
-        ),
-      );
-
-      if (!mounted || payload == null) {
-        return;
-      }
-
-      final title = payload.$1.trim();
-      if (title.isEmpty) {
-        _showSnack(
-          _tr(en: 'Group title is required', ar: 'اسم المجموعة مطلوب'),
-        );
-        return;
-      }
-      final extra = payload.$2
-          .split(',')
-          .map((e) => e.trim())
-          .where((e) => e.isNotEmpty)
-          .toSet();
-      final allMembers = <String>{...basePeers, ...extra}.toList();
-      if (allMembers.isEmpty) {
-        _showSnack(
-          _tr(en: 'No members found to add', ar: 'لا يوجد أعضاء لإضافتهم'),
-        );
-        return;
-      }
-
-      final result = await repository.createGroup(
-        title: title,
-        memberUserIds: allMembers,
-      );
-      if (!mounted) {
-        return;
-      }
-      if (result is Success<String>) {
-        _showSnack(_tr(en: 'Group created', ar: 'تم إنشاء المجموعة'));
-        if (context.mounted) {
-          context.push('/chat/${result.value}');
-        }
-        return;
-      }
-      _showSnack(
-        result.error?.message ??
-            _tr(en: 'Failed to create group', ar: 'فشل إنشاء المجموعة'),
-      );
-    } finally {
-      titleController.dispose();
-      extraController.dispose();
+    final draft = await showGroupCreationSheet(
+      context: context,
+      contactsRepository: contactsRepository,
+      title: _tr(
+        en: 'Create group from this chat',
+        ar: 'Create group from this chat',
+      ),
+      preselectedMemberIdentifiers: preselectedMembers,
+    );
+    if (!mounted || draft == null) {
+      return;
     }
+
+    final result = await repository.createGroup(
+      title: draft.title,
+      memberUserIds: draft.memberIdentifiers,
+    );
+    if (!mounted) {
+      return;
+    }
+    if (result is Success<String>) {
+      _showSnack(_tr(en: 'Group created', ar: 'Group created'));
+      if (context.mounted) {
+        context.push('/chat/${result.value}');
+      }
+      return;
+    }
+    _showSnack(
+      result.error?.message ??
+          _tr(en: 'Failed to create group', ar: 'Failed to create group'),
+    );
   }
 
   Future<void> _viewContactInfo() async {
@@ -4049,6 +4002,17 @@ class _ChatPageState extends State<ChatPage> {
     }
     try {
       return getIt<ConversationRepository>();
+    } catch (_) {
+      return null;
+    }
+  }
+
+  ContactsRepository? _resolveContactsRepository() {
+    if (!getIt.isRegistered<ContactsRepository>()) {
+      return null;
+    }
+    try {
+      return getIt<ContactsRepository>();
     } catch (_) {
       return null;
     }

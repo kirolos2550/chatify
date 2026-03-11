@@ -2,8 +2,11 @@ import 'package:chatify/app/di/injection.dart';
 import 'package:chatify/core/common/result.dart';
 import 'package:chatify/core/domain/entities/conversation.dart';
 import 'package:chatify/core/domain/enums/chat_enums.dart';
+import 'package:chatify/core/domain/repositories/contacts_repository.dart';
 import 'package:chatify/core/domain/repositories/conversation_repository.dart';
 import 'package:chatify/features/chats/presentation/bloc/chats_cubit.dart';
+import 'package:chatify/features/chats/presentation/widgets/direct_chat_sheet.dart';
+import 'package:chatify/features/chats/presentation/widgets/group_creation_sheet.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:flutter/material.dart';
@@ -191,43 +194,28 @@ class _ChatListPageState extends State<ChatListPage> {
   }
 
   Future<void> _createDirectConversation() async {
-    final peerController = TextEditingController();
+    final conversationRepository = _resolveConversationRepository();
+    if (conversationRepository == null) {
+      _showSnack('Conversation service is unavailable right now');
+      return;
+    }
+    final contactsRepository = _resolveContactsRepository();
+    if (contactsRepository == null) {
+      _showSnack('Contacts service is unavailable right now');
+      return;
+    }
+
     try {
-      final peerUserId = await showDialog<String>(
+      final peerUserId = await showDirectChatSheet(
         context: context,
-        builder: (context) => AlertDialog(
-          title: const Text('New direct chat'),
-          content: TextField(
-            controller: peerController,
-            decoration: const InputDecoration(
-              labelText: 'Peer user id or phone',
-              hintText: 'uid_123 or +2010XXXXXXXX',
-            ),
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.of(context).pop(),
-              child: const Text('Cancel'),
-            ),
-            FilledButton(
-              onPressed: () => Navigator.of(context).pop(peerController.text),
-              child: const Text('Create'),
-            ),
-          ],
-        ),
+        contactsRepository: contactsRepository,
       );
 
       if (!mounted || peerUserId == null || peerUserId.trim().isEmpty) {
         return;
       }
 
-      final repository = _resolveConversationRepository();
-      if (repository == null) {
-        _showSnack('Conversation service is unavailable right now');
-        return;
-      }
-
-      final result = await repository.createDirectConversation(
+      final result = await conversationRepository.createDirectConversation(
         peerUserId: peerUserId.trim(),
       );
       if (!mounted) {
@@ -245,79 +233,33 @@ class _ChatListPageState extends State<ChatListPage> {
         return;
       }
       _showSnack('Failed to create direct conversation: $error');
-    } finally {
-      peerController.dispose();
     }
   }
 
   Future<void> _createGroupConversation() async {
-    final titleController = TextEditingController();
-    final membersController = TextEditingController();
+    final conversationRepository = _resolveConversationRepository();
+    if (conversationRepository == null) {
+      _showSnack('Conversation service is unavailable right now');
+      return;
+    }
+    final contactsRepository = _resolveContactsRepository();
+    if (contactsRepository == null) {
+      _showSnack('Contacts service is unavailable right now');
+      return;
+    }
+
     try {
-      final payload = await showDialog<(String, String)>(
+      final draft = await showGroupCreationSheet(
         context: context,
-        builder: (context) => AlertDialog(
-          title: const Text('New group'),
-          content: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              TextField(
-                controller: titleController,
-                decoration: const InputDecoration(labelText: 'Group title'),
-              ),
-              const SizedBox(height: 12),
-              TextField(
-                controller: membersController,
-                decoration: const InputDecoration(
-                  labelText: 'Members',
-                  hintText: 'uid_1, uid_2',
-                ),
-              ),
-            ],
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.of(context).pop(),
-              child: const Text('Cancel'),
-            ),
-            FilledButton(
-              onPressed: () => Navigator.of(
-                context,
-              ).pop((titleController.text, membersController.text)),
-              child: const Text('Create'),
-            ),
-          ],
-        ),
+        contactsRepository: contactsRepository,
+        title: 'Create group',
       );
-
-      if (!mounted || payload == null) {
+      if (!mounted || draft == null) {
         return;
       }
-
-      final title = payload.$1.trim();
-      if (title.isEmpty) {
-        _showSnack('Group title is required');
-        return;
-      }
-      final members = payload.$2
-          .split(',')
-          .map((item) => item.trim())
-          .where((item) => item.isNotEmpty)
-          .toList();
-      if (members.isEmpty) {
-        _showSnack('Add at least one member user id');
-        return;
-      }
-
-      final repository = _resolveConversationRepository();
-      if (repository == null) {
-        _showSnack('Conversation service is unavailable right now');
-        return;
-      }
-
-      final result = await repository.createGroup(
-        title: title,
-        memberUserIds: members,
+      final result = await conversationRepository.createGroup(
+        title: draft.title,
+        memberUserIds: draft.memberIdentifiers,
       );
       if (!mounted) {
         return;
@@ -334,9 +276,6 @@ class _ChatListPageState extends State<ChatListPage> {
         return;
       }
       _showSnack('Failed to create group conversation: $error');
-    } finally {
-      titleController.dispose();
-      membersController.dispose();
     }
   }
 
@@ -495,6 +434,17 @@ class _ChatListPageState extends State<ChatListPage> {
     }
     try {
       return getIt<ConversationRepository>();
+    } catch (_) {
+      return null;
+    }
+  }
+
+  ContactsRepository? _resolveContactsRepository() {
+    if (!getIt.isRegistered<ContactsRepository>()) {
+      return null;
+    }
+    try {
+      return getIt<ContactsRepository>();
     } catch (_) {
       return null;
     }

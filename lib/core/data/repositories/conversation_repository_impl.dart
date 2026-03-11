@@ -1,4 +1,5 @@
 import 'package:chatify/core/common/failure.dart';
+import 'package:chatify/core/common/phone_normalizer.dart';
 import 'package:chatify/core/common/result.dart';
 import 'package:chatify/core/domain/entities/conversation.dart';
 import 'package:chatify/core/domain/enums/chat_enums.dart';
@@ -104,14 +105,42 @@ class ConversationRepositoryImpl implements ConversationRepository {
     if (uid == null) {
       return const FailureResult(Failure('No active user'));
     }
+    final trimmedTitle = title.trim();
+    if (trimmedTitle.isEmpty) {
+      return const FailureResult(Failure('Group title is required'));
+    }
     try {
+      final resolvedMembers = <String>{};
+      for (final rawIdentifier in memberUserIds) {
+        final identifier = rawIdentifier.trim();
+        if (identifier.isEmpty) {
+          continue;
+        }
+        final resolved = await _resolvePeerUserId(identifier);
+        if (resolved == null || resolved == uid) {
+          continue;
+        }
+        resolvedMembers.add(resolved);
+      }
+
+      if (resolvedMembers.isEmpty) {
+        return const FailureResult(
+          Failure(
+            'No registered members could be resolved. Add at least one Chatify user by contact, phone, or user id.',
+          ),
+        );
+      }
+
       final id = _uuid.v4();
-      final allMembers = {...memberUserIds, uid}.toList();
+      final allMembers = <String>{
+        uid,
+        ...resolvedMembers,
+      }.toList(growable: false);
       final now = DateTime.now().millisecondsSinceEpoch;
       final ref = _firestore.collection(FirebasePaths.conversations).doc(id);
       await ref.set({
         'type': 'group',
-        'title': title,
+        'title': trimmedTitle,
         'ownerId': uid,
         'memberIds': allMembers,
         'archivedByUserIds': const <String>[],
@@ -338,22 +367,64 @@ class ConversationRepositoryImpl implements ConversationRepository {
   }
 
   Future<String?> _resolvePeerUserId(String peerIdentifier) async {
+    final identifier = peerIdentifier.trim();
+    if (identifier.isEmpty) {
+      return null;
+    }
     final usersRef = _firestore.collection(FirebasePaths.users);
 
-    final byId = await usersRef.doc(peerIdentifier).get();
+    final byId = await usersRef.doc(identifier).get();
     if (byId.exists) {
       return byId.id;
     }
 
-    final byPhone = await usersRef
-        .where('phone', isEqualTo: peerIdentifier)
-        .limit(1)
-        .get();
-    if (byPhone.docs.isNotEmpty) {
-      return byPhone.docs.first.id;
+    final normalizedPhone = PhoneNormalizer.toE164(identifier);
+    final phoneCandidates = <String>{
+      identifier,
+      if (normalizedPhone.isNotEmpty) normalizedPhone,
+    };
+    for (final phone in phoneCandidates) {
+      final resolvedByPhone = await _resolveUserIdByField(
+        usersRef: usersRef,
+        field: 'phone',
+        value: phone,
+      );
+      if (resolvedByPhone != null) {
+        return resolvedByPhone;
+      }
+    }
+
+    final digits = PhoneNormalizer.toDigits(identifier);
+    if (digits.isNotEmpty) {
+      final resolvedByDigits = await _resolveUserIdByField(
+        usersRef: usersRef,
+        field: 'phoneDigits',
+        value: digits,
+      );
+      if (resolvedByDigits != null) {
+        return resolvedByDigits;
+      }
     }
 
     return null;
+  }
+
+  Future<String?> _resolveUserIdByField({
+    required CollectionReference<Map<String, dynamic>> usersRef,
+    required String field,
+    required String value,
+  }) async {
+    if (value.trim().isEmpty) {
+      return null;
+    }
+    final snapshot = await usersRef
+        .where(field, isEqualTo: value)
+        .limit(1)
+        .get();
+    if (snapshot.docs.isEmpty) {
+      return null;
+    }
+    return snapshot.docs.first.id;
   }
 
   Future<String?> _findExistingDirectConversation({

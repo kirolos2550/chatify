@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:chatify/core/common/app_logger.dart';
 import 'package:chatify/core/common/failure.dart';
+import 'package:chatify/core/common/phone_normalizer.dart';
 import 'package:chatify/core/common/result.dart';
 import 'package:chatify/core/domain/entities/app_user.dart';
 import 'package:chatify/core/domain/repositories/auth_repository.dart';
@@ -262,10 +263,12 @@ class FirebaseAuthRepository implements AuthRepository {
     final existing = await userRef.get();
     final normalizedDisplayName = _resolveDisplayName(displayName, user);
     final effectiveAvatarUrl = avatarUrl ?? user.photoURL;
+    final phoneNumber = user.phoneNumber ?? '';
 
     final payload = <String, Object?>{
       'id': user.uid,
-      'phone': user.phoneNumber ?? '',
+      'phone': phoneNumber,
+      'phoneDigits': PhoneNormalizer.toDigits(phoneNumber),
       'displayName': normalizedDisplayName,
       'updatedAt': FieldValue.serverTimestamp(),
     };

@@ -1,6 +1,7 @@
 import 'package:chatify/app/flavor.dart';
 import 'package:chatify/app/localization/app_locale_controller.dart';
 import 'package:chatify/app/router/app_router.dart';
+import 'package:chatify/core/notifications/in_app_notification_host.dart';
 import 'package:chatify/app/theme/app_theme.dart';
 import 'package:chatify/l10n/app_localizations.dart';
 import 'package:chatify/l10n/l10n.dart';
@@ -31,6 +32,8 @@ class ChatifyApp extends StatelessWidget {
           GlobalCupertinoLocalizations.delegate,
         ],
         routerConfig: AppRouter.router,
+        builder: (context, child) =>
+            InAppNotificationHost(child: child ?? const SizedBox.shrink()),
       ),
     );
   }

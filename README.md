@@ -152,7 +152,37 @@ Verify token must match `WHATSAPP_VERIFY_TOKEN`.
 6. Enter phone numbers in E.164 format (example: `+2010XXXXXXXX`).
 7. After successful OTP verification, the app now auto-creates/updates `users/{uid}` in Firestore.
 
-## Latest Bug Fixes (v1.0.4+5)
+## Latest Bug Fixes (v1.0.5+6)
+
+- Added contacts-driven direct chat creation sheet:
+  - Lists registered contacts already on Chatify.
+  - Supports search across name/phone.
+  - Falls back to manual user-id/phone entry when contacts are unavailable.
+  - Adds quick SMS invite action for contacts not yet on Chatify.
+- Added contacts-driven group creation sheet:
+  - Select members from registered contacts.
+  - Supports preselected members when creating a group from an existing chat.
+  - Supports manual fallback entry (uid/phone) when contacts are unavailable.
+- Improved contacts/domain data pipeline:
+  - Added shared phone normalization utility (`E.164` + digits fallback).
+  - Added `ContactCandidate` model and repository API `fetchContactCandidates()`.
+  - Added `phoneDigits` persistence on auth profile sync for robust matching.
+- Hardened conversation member resolution:
+  - Group and direct chat creation now resolve identifiers by user id, normalized phone, or phone digits.
+  - Better validation for empty group titles and unresolved member lists.
+- Added in-app message notification pipeline:
+  - New notification orchestrator watching latest messages in user conversations.
+  - New in-app notification center + top popup host integrated at app level.
+  - Suppresses duplicate, self-sent, and currently-open-conversation notifications.
+- Added contacts permission declarations:
+  - Android: `READ_CONTACTS`
+  - iOS: `NSContactsUsageDescription`
+- Added tests for:
+  - `PhoneNormalizer`
+  - `MessageNotificationDecisionEngine`
+  - `InAppNotificationHost`
+
+## Previous Bug Fixes (v1.0.4+5)
 
 - Moved chat media uploads (images/files/voice notes) to Supabase Storage as primary provider.
 - Added runtime configuration for media storage via `SUPABASE_URL`, `SUPABASE_ANON_KEY`, and `SUPABASE_STORAGE_BUCKET`.

@@ -9,6 +9,7 @@ import 'package:chatify/app/router/app_router.dart';
 import 'package:chatify/core/common/app_logger.dart';
 import 'package:chatify/core/network/firebase_paths.dart';
 import 'package:chatify/core/notifications/chat_local_notifications.dart';
+import 'package:chatify/core/notifications/message_notification_orchestrator.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:cloud_functions/cloud_functions.dart';
 import 'package:firebase_auth/firebase_auth.dart';
@@ -99,6 +100,7 @@ Future<void> bootstrap(AppFlavor flavor) async {
       await configureDependencies(flavor);
       await AppLocaleController.instance.load();
       runApp(ChatifyApp(flavor: flavor));
+      MessageNotificationOrchestrator.instance.start();
       _startUiHangWatchdog();
       _startIncomingCallAlerts();
 
@@ -131,6 +133,7 @@ Future<void> bootstrap(AppFlavor flavor) async {
           _incomingCallAuthSubscription?.cancel();
           _incomingCallAuthSubscription = null;
           _notifiedIncomingCallIds.clear();
+          unawaited(MessageNotificationOrchestrator.instance.stop());
           unawaited(AppLogger.flushAndClose());
         },
       );
