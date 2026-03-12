@@ -27,6 +27,11 @@ jobs:
           channel: stable
       - name: Pub get
         run: flutter pub get
+      - name: Prepare iOS build config
+        run: |
+          # iOS project currently has only the default Runner scheme.
+          # Remove default-flavor in CI to avoid forcing a non-existent iOS flavor.
+          sed -i.bak '/^[[:space:]]*default-flavor:[[:space:]]*/d' pubspec.yaml
+          rm -f pubspec.yaml.bak
       - name: Build iOS IPA
         run: flutter build ipa --release --no-codesign
-
