@@ -500,11 +500,68 @@ class ChatThreadCubit extends Cubit<ChatThreadState> {
       emit(state.copyWith(errorMessage: result.failure.message));
       return false;
     }
+    _applyReactionLocally(
+      messageId: message.id,
+      reactingUserId: _currentUserId,
+      emoji: emoji,
+    );
     _logActionSuccess('chat.reaction', <String, Object?>{
       'conversationId': conversationId,
       'messageId': message.id,
     });
     return true;
+  }
+
+  void _applyReactionLocally({
+    required String messageId,
+    required String reactingUserId,
+    required String? emoji,
+  }) {
+    final normalized = emoji?.trim();
+    var updated = false;
+    final nextMessages = state.messages
+        .map((item) {
+          if (item.id != messageId) {
+            return item;
+          }
+          final reactions = Map<String, String>.from(item.reactionsByUser);
+          if (normalized == null || normalized.isEmpty) {
+            reactions.remove(reactingUserId);
+          } else {
+            reactions[reactingUserId] = normalized;
+          }
+          updated = true;
+          return _copyMessageViewWithReactions(
+            message: item,
+            reactionsByUser: reactions,
+          );
+        })
+        .toList(growable: false);
+    if (!updated) {
+      return;
+    }
+    emit(state.copyWith(messages: nextMessages, clearError: true));
+  }
+
+  ChatMessageView _copyMessageViewWithReactions({
+    required ChatMessageView message,
+    required Map<String, String> reactionsByUser,
+  }) {
+    return ChatMessageView(
+      id: message.id,
+      senderId: message.senderId,
+      type: message.type,
+      text: message.text,
+      sentAt: message.sentAt,
+      isMine: message.isMine,
+      ack: message.ack,
+      replyToMessageId: message.replyToMessageId,
+      editedAt: message.editedAt,
+      deletedForAllAt: message.deletedForAllAt,
+      isStarred: message.isStarred,
+      isPinned: message.isPinned,
+      reactionsByUser: Map<String, String>.unmodifiable(reactionsByUser),
+    );
   }
 
   Future<bool> toggleMessageStar(ChatMessageView message) async {

@@ -3,6 +3,7 @@ import 'package:chatify/core/common/app_logger.dart';
 import 'package:chatify/core/domain/entities/call_session.dart';
 import 'package:chatify/core/domain/enums/chat_enums.dart';
 import 'package:chatify/features/calls/presentation/bloc/calls_cubit.dart';
+import 'package:chatify/features/calls/presentation/pages/in_call_page.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:flutter/material.dart';
@@ -21,6 +22,7 @@ class _CallsPageState extends State<CallsPage> {
       callId: 'local_call_1',
       title: 'Alice',
       subtitle: 'Yesterday, voice call',
+      participantLabels: <String>['Alice'],
       type: CallType.voice,
       state: CallState.ended,
     ),
@@ -28,6 +30,7 @@ class _CallsPageState extends State<CallsPage> {
       callId: 'local_call_2',
       title: 'Backend Team',
       subtitle: 'Today, video call',
+      participantLabels: <String>['Alice', 'Mohamed', 'Rania'],
       type: CallType.video,
       state: CallState.ringing,
       isIncoming: true,
@@ -68,19 +71,22 @@ class _CallsPageState extends State<CallsPage> {
           }
         },
         builder: (context, state) {
-          final entries = state.calls
-              .map(
-                (call) => _LocalCallEntry(
-                  callId: call.callId,
-                  title: _resolveCallTitle(call),
-                  subtitle:
-                      '${_isIncomingCall(call) ? 'Incoming' : 'Outgoing'} ${call.type.name} call',
-                  type: call.type,
-                  state: call.state,
-                  isIncoming: _isIncomingCall(call),
-                ),
-              )
-              .toList();
+          final entries = state.calls.map((call) {
+            final participantLabels = _participantLabelsForCall(call);
+            return _LocalCallEntry(
+              callId: call.callId,
+              title: _resolveCallTitle(
+                call: call,
+                participantLabels: participantLabels,
+              ),
+              subtitle:
+                  '${_isIncomingCall(call) ? 'Incoming' : 'Outgoing'} ${call.type.name} call',
+              participantLabels: participantLabels,
+              type: call.type,
+              state: call.state,
+              isIncoming: _isIncomingCall(call),
+            );
+          }).toList();
           return _CallsScaffold(
             entries: entries,
             loading: state.loading,
@@ -121,15 +127,41 @@ class _CallsPageState extends State<CallsPage> {
     return initiatorId != current;
   }
 
-  String _resolveCallTitle(CallSession call) {
+  String _resolveCallTitle({
+    required CallSession call,
+    required List<String> participantLabels,
+  }) {
+    if (call.participantIds.length > 2 || participantLabels.length > 1) {
+      return 'Group call';
+    }
+    if (participantLabels.isNotEmpty) {
+      return participantLabels.first;
+    }
+    return _labelForParticipantId(call.initiatorId ?? '');
+  }
+
+  List<String> _participantLabelsForCall(CallSession call) {
     final current = _currentUserId;
     final others = call.participantIds
         .where((participant) => current == null || participant != current)
+        .where((participant) => participant.trim().isNotEmpty)
+        .map(_labelForParticipantId)
         .toList(growable: false);
-    if (others.isNotEmpty) {
-      return others.join(', ');
+    if (others.isEmpty && current != null && current.isNotEmpty) {
+      return const ['You'];
     }
-    return call.initiatorId ?? 'Unknown';
+    return others;
+  }
+
+  String _labelForParticipantId(String participantId) {
+    final value = participantId.trim();
+    if (value.isEmpty) {
+      return 'Unknown';
+    }
+    if (value.length <= 16) {
+      return value;
+    }
+    return '${value.substring(0, 16)}...';
   }
 
   Future<void> _startLocalCall(
@@ -143,12 +175,14 @@ class _CallsPageState extends State<CallsPage> {
       return;
     }
     setState(() {
+      final labels = participantIds.map(_labelForParticipantId).toList();
       _localCalls.insert(
         0,
         _LocalCallEntry(
           callId: 'local_call_${DateTime.now().millisecondsSinceEpoch}',
-          title: participantIds.join(', '),
+          title: labels.length > 1 ? 'Group call' : labels.first,
           subtitle: '${type.name} call',
+          participantLabels: labels,
           type: type,
           state: CallState.ringing,
         ),
@@ -243,6 +277,7 @@ class _CallsScaffold extends StatelessWidget {
                           item.state == CallState.connecting ||
                           item.state == CallState.connected;
                       return ListTile(
+                        onTap: () => _openInCall(context, item),
                         leading: CircleAvatar(
                           child: Text(
                             item.title.isEmpty
@@ -372,6 +407,27 @@ class _CallsScaffold extends StatelessWidget {
         .toList();
     return values;
   }
+
+  Future<void> _openInCall(BuildContext context, _LocalCallEntry item) async {
+    await Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (_) => InCallPage(
+          conversationTitle: item.title,
+          participantLabels: item.participantLabels,
+          callType: item.type,
+          initialState: item.state,
+          isIncoming: item.isIncoming,
+          onEndCall: () => onEndCall(item.callId),
+          onAcceptCall: item.isIncoming
+              ? () => onAcceptCall(item.callId)
+              : null,
+          onRejectCall: item.isIncoming
+              ? () => onRejectCall(item.callId)
+              : null,
+        ),
+      ),
+    );
+  }
 }
 
 class _LocalCallEntry {
@@ -379,6 +435,7 @@ class _LocalCallEntry {
     required this.callId,
     required this.title,
     required this.subtitle,
+    required this.participantLabels,
     required this.type,
     required this.state,
     this.isIncoming = false,
@@ -387,6 +444,7 @@ class _LocalCallEntry {
   final String callId;
   final String title;
   final String subtitle;
+  final List<String> participantLabels;
   final CallType type;
   final CallState state;
   final bool isIncoming;
@@ -395,6 +453,7 @@ class _LocalCallEntry {
     String? callId,
     String? title,
     String? subtitle,
+    List<String>? participantLabels,
     CallType? type,
     CallState? state,
     bool? isIncoming,
@@ -403,6 +462,7 @@ class _LocalCallEntry {
       callId: callId ?? this.callId,
       title: title ?? this.title,
       subtitle: subtitle ?? this.subtitle,
+      participantLabels: participantLabels ?? this.participantLabels,
       type: type ?? this.type,
       state: state ?? this.state,
       isIncoming: isIncoming ?? this.isIncoming,

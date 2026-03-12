@@ -19,6 +19,7 @@ import 'package:chatify/core/domain/repositories/contacts_repository.dart';
 import 'package:chatify/core/domain/repositories/conversation_repository.dart';
 import 'package:chatify/core/domain/repositories/message_repository.dart';
 import 'package:chatify/core/network/firebase_paths.dart';
+import 'package:chatify/features/calls/presentation/pages/in_call_page.dart';
 import 'package:chatify/features/chats/domain/usecases/send_text_message_use_case.dart';
 import 'package:chatify/features/chats/presentation/bloc/chat_thread_cubit.dart';
 import 'package:chatify/features/chats/presentation/widgets/group_creation_sheet.dart';
@@ -364,80 +365,105 @@ class _ChatPageState extends State<ChatPage> {
                       itemCount: state.messages.length,
                       itemBuilder: (context, index) {
                         final message = state.messages[index];
+                        final hasReactions = message.reactionsByUser.isNotEmpty;
                         return Align(
                           alignment: message.isMine
                               ? Alignment.centerRight
                               : Alignment.centerLeft,
                           child: GestureDetector(
                             onLongPress: () => _onMessageLongPress(message),
-                            child: Container(
-                              margin: const EdgeInsets.symmetric(vertical: 4),
-                              padding: const EdgeInsets.symmetric(
-                                horizontal: 12,
-                                vertical: 10,
+                            child: Padding(
+                              padding: EdgeInsets.only(
+                                bottom: hasReactions ? 16 : 0,
                               ),
-                              constraints: const BoxConstraints(maxWidth: 280),
-                              decoration: BoxDecoration(
-                                color: message.isMine
-                                    ? _myBubbleColor(context)
-                                    : _peerBubbleColor(context),
-                                borderRadius: BorderRadius.circular(14),
-                              ),
-                              child: Column(
-                                crossAxisAlignment: CrossAxisAlignment.start,
+                              child: Stack(
+                                clipBehavior: Clip.none,
                                 children: [
-                                  if (message.isPinned)
-                                    Padding(
-                                      padding: const EdgeInsets.only(bottom: 6),
-                                      child: Row(
-                                        mainAxisSize: MainAxisSize.min,
-                                        children: [
-                                          Icon(
-                                            Icons.push_pin_outlined,
-                                            size: 14,
-                                            color: Theme.of(
-                                              context,
-                                            ).colorScheme.onSurfaceVariant,
+                                  Container(
+                                    margin: const EdgeInsets.symmetric(
+                                      vertical: 4,
+                                    ),
+                                    padding: const EdgeInsets.symmetric(
+                                      horizontal: 12,
+                                      vertical: 10,
+                                    ),
+                                    constraints: const BoxConstraints(
+                                      maxWidth: 280,
+                                    ),
+                                    decoration: BoxDecoration(
+                                      color: message.isMine
+                                          ? _myBubbleColor(context)
+                                          : _peerBubbleColor(context),
+                                      borderRadius: BorderRadius.circular(14),
+                                    ),
+                                    child: Column(
+                                      crossAxisAlignment:
+                                          CrossAxisAlignment.start,
+                                      children: [
+                                        if (message.isPinned)
+                                          Padding(
+                                            padding: const EdgeInsets.only(
+                                              bottom: 6,
+                                            ),
+                                            child: Row(
+                                              mainAxisSize: MainAxisSize.min,
+                                              children: [
+                                                Icon(
+                                                  Icons.push_pin_outlined,
+                                                  size: 14,
+                                                  color: Theme.of(context)
+                                                      .colorScheme
+                                                      .onSurfaceVariant,
+                                                ),
+                                                const SizedBox(width: 4),
+                                                Text(
+                                                  'Pinned',
+                                                  style: Theme.of(
+                                                    context,
+                                                  ).textTheme.labelSmall,
+                                                ),
+                                              ],
+                                            ),
                                           ),
-                                          const SizedBox(width: 4),
-                                          Text(
-                                            'Pinned',
-                                            style: Theme.of(
-                                              context,
-                                            ).textTheme.labelSmall,
+                                        if (message.replyToMessageId != null)
+                                          Container(
+                                            margin: const EdgeInsets.only(
+                                              bottom: 6,
+                                            ),
+                                            padding: const EdgeInsets.symmetric(
+                                              horizontal: 8,
+                                              vertical: 4,
+                                            ),
+                                            decoration: BoxDecoration(
+                                              color: Theme.of(context)
+                                                  .colorScheme
+                                                  .surface
+                                                  .withValues(alpha: 0.45),
+                                              borderRadius:
+                                                  BorderRadius.circular(8),
+                                            ),
+                                            child: Text(
+                                              'Reply to ${_shortId(message.replyToMessageId!)}',
+                                              style: Theme.of(
+                                                context,
+                                              ).textTheme.bodySmall,
+                                            ),
                                           ),
-                                        ],
+                                        _buildMessageBody(message),
+                                        const SizedBox(height: 6),
+                                        _buildMessageMeta(context, message),
+                                      ],
+                                    ),
+                                  ),
+                                  if (hasReactions)
+                                    Positioned(
+                                      bottom: -10,
+                                      right: message.isMine ? 10 : null,
+                                      left: message.isMine ? null : 10,
+                                      child: _buildMessageReactionBadge(
+                                        message,
                                       ),
                                     ),
-                                  if (message.replyToMessageId != null)
-                                    Container(
-                                      margin: const EdgeInsets.only(bottom: 6),
-                                      padding: const EdgeInsets.symmetric(
-                                        horizontal: 8,
-                                        vertical: 4,
-                                      ),
-                                      decoration: BoxDecoration(
-                                        color: Theme.of(context)
-                                            .colorScheme
-                                            .surface
-                                            .withValues(alpha: 0.45),
-                                        borderRadius: BorderRadius.circular(8),
-                                      ),
-                                      child: Text(
-                                        'Reply to ${_shortId(message.replyToMessageId!)}',
-                                        style: Theme.of(
-                                          context,
-                                        ).textTheme.bodySmall,
-                                      ),
-                                    ),
-                                  _buildMessageBody(message),
-                                  if (message.reactionsByUser.isNotEmpty)
-                                    Padding(
-                                      padding: const EdgeInsets.only(top: 6),
-                                      child: _buildMessageReactions(message),
-                                    ),
-                                  const SizedBox(height: 6),
-                                  _buildMessageMeta(context, message),
                                 ],
                               ),
                             ),
@@ -1062,11 +1088,32 @@ class _ChatPageState extends State<ChatPage> {
       participantIds: participants,
       type: type,
     );
-    if (result.error == null) {
-      _showSnack('${type.name} call started');
+    final session = result.data;
+    if (session == null) {
+      _showSnack(result.error?.message ?? 'Failed to start ${type.name} call');
       return;
     }
-    _showSnack(result.error?.message ?? 'Failed to start ${type.name} call');
+
+    if (!mounted) {
+      return;
+    }
+    final conversationTitle = _conversationTitle.trim().isEmpty
+        ? _defaultConversationTitle()
+        : _conversationTitle.trim();
+    final participantLabels = _callParticipantLabels(session.participantIds);
+    await Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (_) => InCallPage(
+          conversationTitle: conversationTitle,
+          participantLabels: participantLabels,
+          callType: type,
+          initialState: session.state,
+          onEndCall: () async {
+            await repository.endCall(callId: session.callId);
+          },
+        ),
+      ),
+    );
   }
 
   Future<List<String>> _loadConversationMembers() async {
@@ -1098,6 +1145,33 @@ class _ChatPageState extends State<ChatPage> {
     }
     final current = _resolveCurrentUserId();
     return <String>{current}.toList(growable: false);
+  }
+
+  List<String> _callParticipantLabels(List<String> participantIds) {
+    final currentUserId = _resolveCurrentUserId();
+    final labels = participantIds
+        .where((participant) => participant.trim().isNotEmpty)
+        .where((participant) => participant != currentUserId)
+        .map(_callParticipantLabel)
+        .toList(growable: false);
+    if (labels.isEmpty) {
+      return const ['You'];
+    }
+    return labels;
+  }
+
+  String _callParticipantLabel(String participantId) {
+    final value = participantId.trim();
+    if (value.isEmpty) {
+      return 'Unknown';
+    }
+    if (value.startsWith('peer-')) {
+      return 'Contact';
+    }
+    if (value.length <= 14) {
+      return value;
+    }
+    return _shortId(value);
   }
 
   Future<void> _refreshConversationTitle({String? peerUserId}) async {
@@ -3007,12 +3081,11 @@ class _ChatPageState extends State<ChatPage> {
                     ),
                     onTap: () => Navigator.of(context).pop(_MessageAction.pin),
                   ),
-                if (message.isMine)
-                  ListTile(
-                    leading: const Icon(Icons.info_outline),
-                    title: Text(_localizedInfoLabel()),
-                    onTap: () => Navigator.of(context).pop(_MessageAction.info),
-                  ),
+                ListTile(
+                  leading: const Icon(Icons.info_outline),
+                  title: Text(_localizedInfoLabel()),
+                  onTap: () => Navigator.of(context).pop(_MessageAction.info),
+                ),
                 if (message.isMine &&
                     !message.isDeleted &&
                     (message.type == MessageType.text ||
@@ -3267,21 +3340,11 @@ class _ChatPageState extends State<ChatPage> {
   }
 
   Future<void> _showMessageInfo(ChatMessageView message) async {
-    if (!message.isMine) {
-      _showSnack(
-        _tr(
-          en: 'Message info is available only for sender',
-          ar: 'معلومات الرسالة متاحة للمرسل فقط',
-        ),
-      );
-      return;
-    }
     final sentAt = message.sentAt.toString();
     final editedAt = message.editedAt?.toString() ?? '-';
     final deletedAt = message.deletedForAllAt?.toString() ?? '-';
-    final reactions = message.reactionsByUser.values.isEmpty
-        ? '-'
-        : message.reactionsByUser.values.join(' ');
+    final reactionsSummary = _reactionSummaryText(message.reactionsByUser);
+    final reactionsByUser = _reactionUsersText(message.reactionsByUser);
     final details = _tr(
       en:
           'Message ID: ${message.id}\n'
@@ -3292,7 +3355,8 @@ class _ChatPageState extends State<ChatPage> {
           'Reply to: ${message.replyToMessageId ?? '-'}\n'
           'Starred: ${message.isStarred}\n'
           'Pinned: ${message.isPinned}\n'
-          'Reactions: $reactions',
+          'Reactions summary: $reactionsSummary\n'
+          'Reactions by user:\n$reactionsByUser',
       ar:
           'معرف الرسالة: ${message.id}\n'
           'معرف المرسل: ${message.senderId}\n'
@@ -3302,7 +3366,8 @@ class _ChatPageState extends State<ChatPage> {
           'رد على: ${message.replyToMessageId ?? '-'}\n'
           'مميزة: ${message.isStarred ? 'نعم' : 'لا'}\n'
           'مثبتة: ${message.isPinned ? 'نعم' : 'لا'}\n'
-          'التفاعلات: $reactions',
+          'ملخص التفاعلات: $reactionsSummary\n'
+          'التفاعلات حسب المستخدم:\n$reactionsByUser',
     );
     await showDialog<void>(
       context: context,
@@ -3317,6 +3382,36 @@ class _ChatPageState extends State<ChatPage> {
         ],
       ),
     );
+  }
+
+  String _reactionSummaryText(Map<String, String> reactionsByUser) {
+    if (reactionsByUser.isEmpty) {
+      return '-';
+    }
+    final counts = <String, int>{};
+    for (final emoji in reactionsByUser.values) {
+      counts.update(emoji, (value) => value + 1, ifAbsent: () => 1);
+    }
+    final sorted = counts.entries.toList()
+      ..sort((left, right) => right.value.compareTo(left.value));
+    return sorted.map((entry) => '${entry.key} ${entry.value}').join(', ');
+  }
+
+  String _reactionUsersText(Map<String, String> reactionsByUser) {
+    if (reactionsByUser.isEmpty) {
+      return '-';
+    }
+    final currentUserId = _resolveCurrentUserId();
+    final entries = reactionsByUser.entries.toList()
+      ..sort((left, right) => left.key.compareTo(right.key));
+    return entries
+        .map((entry) {
+          final userLabel = entry.key == currentUserId
+              ? _tr(en: 'You', ar: 'أنت')
+              : _shortId(entry.key);
+          return '- $userLabel: ${entry.value}';
+        })
+        .join('\n');
   }
 
   Future<String?> _promptMessageInput({
@@ -3467,25 +3562,314 @@ class _ChatPageState extends State<ChatPage> {
     }
   }
 
-  Widget _buildMessageReactions(ChatMessageView message) {
+  Widget _buildMessageReactionBadge(ChatMessageView message) {
+    final label = _reactionBadgeLabel(message.reactionsByUser);
+    final theme = Theme.of(context);
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        borderRadius: BorderRadius.circular(14),
+        onTap: () => unawaited(_showReactionParticipantsSheet(message)),
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+          decoration: BoxDecoration(
+            color: theme.colorScheme.surface,
+            borderRadius: BorderRadius.circular(14),
+            border: Border.all(color: theme.colorScheme.outlineVariant),
+            boxShadow: [
+              BoxShadow(
+                color: Colors.black.withValues(alpha: 0.18),
+                blurRadius: 5,
+                offset: const Offset(0, 1),
+              ),
+            ],
+          ),
+          child: Text(
+            label,
+            style: theme.textTheme.bodySmall?.copyWith(
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  String _reactionBadgeLabel(Map<String, String> reactionsByUser) {
+    if (reactionsByUser.isEmpty) {
+      return '';
+    }
     final counts = <String, int>{};
-    for (final emoji in message.reactionsByUser.values) {
+    for (final emoji in reactionsByUser.values) {
       counts.update(emoji, (value) => value + 1, ifAbsent: () => 1);
     }
     final sorted = counts.entries.toList()
       ..sort((left, right) => right.value.compareTo(left.value));
-    return Wrap(
-      spacing: 6,
-      runSpacing: 4,
-      children: sorted
-          .map(
-            (entry) => Chip(
-              materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
-              label: Text('${entry.key} ${entry.value}'),
-            ),
-          )
-          .toList(growable: false),
+    final top = sorted.first;
+    if (sorted.length == 1 && top.value == 1) {
+      return top.key;
+    }
+    if (sorted.length == 1) {
+      return '${top.key} ${top.value}';
+    }
+    return '${top.key} ${reactionsByUser.length}';
+  }
+
+  Future<void> _showReactionParticipantsSheet(ChatMessageView message) async {
+    if (message.reactionsByUser.isEmpty || !mounted) {
+      return;
+    }
+    final currentUserId = _resolveCurrentUserId();
+    final entries = message.reactionsByUser.entries.toList(growable: false)
+      ..sort((left, right) {
+        if (left.key == currentUserId && right.key != currentUserId) {
+          return -1;
+        }
+        if (right.key == currentUserId && left.key != currentUserId) {
+          return 1;
+        }
+        final byEmoji = left.value.compareTo(right.value);
+        if (byEmoji != 0) {
+          return byEmoji;
+        }
+        return left.key.compareTo(right.key);
+      });
+    final participantIds = entries
+        .map((entry) => entry.key)
+        .toList(growable: false);
+    final namesByUser = await _resolveMemberDisplayNames(participantIds);
+    if (!mounted) {
+      return;
+    }
+    final grouped = <String, List<MapEntry<String, String>>>{};
+    for (final entry in entries) {
+      grouped
+          .putIfAbsent(entry.value, () => <MapEntry<String, String>>[])
+          .add(entry);
+    }
+    final emojiOrder = grouped.entries.toList()
+      ..sort((left, right) => right.value.length.compareTo(left.value.length));
+    const allFilter = '__all__';
+    var selectedFilter = allFilter;
+    final totalReactions = entries.length;
+
+    await showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: const Color(0xFF071521),
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+      ),
+      builder: (context) => SafeArea(
+        child: StatefulBuilder(
+          builder: (context, setModalState) {
+            final visibleEntries = selectedFilter == allFilter
+                ? entries
+                : grouped[selectedFilter] ?? const <MapEntry<String, String>>[];
+            final title = _tr(
+              en: '$totalReactions reaction${totalReactions == 1 ? '' : 's'}',
+              ar: '$totalReactions تفاعل',
+            );
+            return SizedBox(
+              height: math.min(MediaQuery.of(context).size.height * 0.86, 620),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const SizedBox(height: 8),
+                  Center(
+                    child: Container(
+                      width: 52,
+                      height: 5,
+                      decoration: BoxDecoration(
+                        color: Colors.white.withValues(alpha: 0.42),
+                        borderRadius: BorderRadius.circular(99),
+                      ),
+                    ),
+                  ),
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(16, 18, 16, 6),
+                    child: Text(
+                      title,
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 20,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                  ),
+                  SingleChildScrollView(
+                    scrollDirection: Axis.horizontal,
+                    padding: const EdgeInsets.fromLTRB(12, 8, 12, 12),
+                    child: Row(
+                      children: [
+                        _buildReactionFilterChip(
+                          label: _tr(en: 'All', ar: 'الكل'),
+                          count: totalReactions,
+                          selected: selectedFilter == allFilter,
+                          icon: Icons.emoji_emotions_outlined,
+                          onTap: () => setModalState(() {
+                            selectedFilter = allFilter;
+                          }),
+                        ),
+                        for (final entry in emojiOrder)
+                          _buildReactionFilterChip(
+                            label: entry.key,
+                            count: entry.value.length,
+                            selected: selectedFilter == entry.key,
+                            onTap: () => setModalState(() {
+                              selectedFilter = entry.key;
+                            }),
+                          ),
+                      ],
+                    ),
+                  ),
+                  const Divider(height: 1, color: Color(0x2238485D)),
+                  Expanded(
+                    child: ListView.separated(
+                      itemCount: visibleEntries.length,
+                      separatorBuilder: (_, _) =>
+                          const Divider(height: 1, color: Color(0x1738485D)),
+                      itemBuilder: (context, index) {
+                        final entry = visibleEntries[index];
+                        final userId = entry.key;
+                        final displayName =
+                            namesByUser[userId] ?? _shortId(userId);
+                        final isCurrentUser = userId == currentUserId;
+                        final subtitle = isCurrentUser
+                            ? _tr(en: 'Tap to remove', ar: 'اضغط للإزالة')
+                            : (displayName == userId ? _shortId(userId) : null);
+                        return ListTile(
+                          onTap: isCurrentUser
+                              ? () => unawaited(
+                                  _removeMyReaction(
+                                    context: context,
+                                    message: message,
+                                  ),
+                                )
+                              : null,
+                          leading: CircleAvatar(
+                            backgroundColor: _reactionAvatarColorFor(userId),
+                            child: Text(
+                              _reactionInitialFor(displayName),
+                              style: const TextStyle(
+                                color: Colors.white,
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
+                          ),
+                          title: Text(
+                            isCurrentUser
+                                ? _tr(en: 'You', ar: 'أنت')
+                                : displayName,
+                            style: const TextStyle(
+                              color: Colors.white,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                          subtitle: subtitle == null
+                              ? null
+                              : Text(
+                                  subtitle,
+                                  style: const TextStyle(color: Colors.white70),
+                                ),
+                          trailing: Text(
+                            entry.value,
+                            style: const TextStyle(fontSize: 24),
+                          ),
+                        );
+                      },
+                    ),
+                  ),
+                ],
+              ),
+            );
+          },
+        ),
+      ),
     );
+  }
+
+  Future<void> _removeMyReaction({
+    required BuildContext context,
+    required ChatMessageView message,
+  }) async {
+    Navigator.of(context).pop();
+    final success = await _chatThreadCubit.setMessageReaction(
+      message: message,
+      emoji: null,
+    );
+    if (success && mounted) {
+      _showSnack(_tr(en: 'Reaction removed', ar: 'تمت إزالة التفاعل'));
+    }
+  }
+
+  Widget _buildReactionFilterChip({
+    required String label,
+    required int count,
+    required bool selected,
+    required VoidCallback onTap,
+    IconData? icon,
+  }) {
+    final backgroundColor = selected
+        ? const Color(0xFF085B3D)
+        : const Color(0xFF222C39);
+    final textColor = selected ? const Color(0xFF55E28B) : Colors.white70;
+    return Padding(
+      padding: const EdgeInsets.only(right: 10),
+      child: Material(
+        color: Colors.transparent,
+        child: InkWell(
+          borderRadius: BorderRadius.circular(22),
+          onTap: onTap,
+          child: Container(
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 9),
+            decoration: BoxDecoration(
+              color: backgroundColor,
+              borderRadius: BorderRadius.circular(22),
+            ),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                if (icon != null) ...[
+                  Icon(icon, size: 22, color: textColor),
+                  const SizedBox(width: 8),
+                ],
+                Text(label, style: const TextStyle(fontSize: 24)),
+                const SizedBox(width: 8),
+                Text(
+                  '$count',
+                  style: TextStyle(
+                    color: textColor,
+                    fontWeight: FontWeight.w700,
+                    fontSize: 24,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Color _reactionAvatarColorFor(String userId) {
+    const palette = <Color>[
+      Color(0xFF556B8A),
+      Color(0xFF2F7D6B),
+      Color(0xFF7E4D9E),
+      Color(0xFF8A5B3A),
+      Color(0xFF3E6EA8),
+    ];
+    final hash = userId.codeUnits.fold<int>(0, (total, unit) => total + unit);
+    return palette[hash % palette.length];
+  }
+
+  String _reactionInitialFor(String value) {
+    final trimmed = value.trim();
+    if (trimmed.isEmpty) {
+      return '?';
+    }
+    return trimmed.substring(0, 1).toUpperCase();
   }
 
   Widget _buildImageAttachmentPreview(String source) {

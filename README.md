@@ -15,6 +15,8 @@ Production-oriented Flutter messaging foundation aligned with:
 - User profile pages (name, phone, avatar, shared groups)
 - Message reactions, stars, and pinned messages
 - Privacy controls persisted in Firebase (read receipts, last seen, typing visibility)
+- In-call experience UI for direct/group calls with call controls
+- Reaction badge overlay + reaction participants sheet (who reacted)
 
 ## Project Structure
 
@@ -154,7 +156,26 @@ Verify token must match `WHATSAPP_VERIFY_TOKEN`.
 6. Enter phone numbers in E.164 format (example: `+2010XXXXXXXX`).
 7. After successful OTP verification, the app now auto-creates/updates `users/{uid}` in Firestore.
 
-## Latest Bug Fixes (v1.0.7+8)
+## Latest Bug Fixes (v1.0.8+9)
+
+- Added dedicated in-call screen UX for both direct and group calls:
+  - Opens directly after starting call from chat.
+  - Opens from Calls list when tapping an active/recent call.
+  - Includes core controls (mute, speaker, video toggle, end call) and incoming answer/decline actions.
+- Upgraded message reactions UI to WhatsApp-like flow:
+  - Reactions now render as a compact badge attached to the message bubble.
+  - Tapping the badge opens a detailed reactions sheet with:
+    - total reaction count header,
+    - emoji filter chips with counts,
+    - participants list showing who reacted with each emoji.
+  - Current user row supports quick `Tap to remove` reaction action.
+- Improved reaction responsiveness:
+  - Reaction updates are applied optimistically in chat state right after success, so UI updates immediately.
+- Expanded message info visibility:
+  - `Message info` is now available from long-press menu for all messages.
+  - Added richer reaction metadata in message info (summary + by-user breakdown).
+
+## Previous Bug Fixes (v1.0.7+8)
 
 - Added unread message counters in chats list UX:
   - Shows total unread messages in chats title (`Chats (N)`).
@@ -167,7 +188,7 @@ Verify token must match `WHATSAPP_VERIFY_TOKEN`.
   - For old conversations missing unread counters, unread count is computed from message receipts and persisted.
 - Verified full test suite passes successfully (`flutter test`).
 
-## Previous Bug Fixes (v1.0.6+7)
+## Earlier Bug Fixes (v1.0.6+7)
 
 - Fixed debug log sink close ordering so queued log lines are flushed before the sink is marked closed.
 - Fixed `Result.logIfFailure` log persistence behavior in tests by ensuring pending writes are not dropped during logger shutdown.
