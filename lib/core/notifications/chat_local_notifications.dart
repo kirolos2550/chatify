@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:injectable/injectable.dart';
 
@@ -7,15 +9,42 @@ class ChatLocalNotifications {
 
   final FlutterLocalNotificationsPlugin _plugin;
   bool _initialized = false;
+  Future<void> Function(String payload)? _onNotificationTap;
 
-  Future<void> initialize() async {
+  Future<void> initialize({
+    Future<void> Function(String payload)? onNotificationTap,
+  }) async {
+    if (onNotificationTap != null) {
+      _onNotificationTap = onNotificationTap;
+    }
     if (_initialized) {
       return;
     }
     const android = AndroidInitializationSettings('@mipmap/ic_launcher');
     const ios = DarwinInitializationSettings();
     const settings = InitializationSettings(android: android, iOS: ios);
-    await _plugin.initialize(settings);
+    await _plugin.initialize(
+      settings,
+      onDidReceiveNotificationResponse: (response) {
+        final payload = response.payload;
+        if (payload == null || payload.trim().isEmpty) {
+          return;
+        }
+        final handler = _onNotificationTap;
+        if (handler == null) {
+          return;
+        }
+        unawaited(handler(payload.trim()));
+      },
+    );
+    final launchDetails = await _plugin.getNotificationAppLaunchDetails();
+    final launchPayload = launchDetails?.notificationResponse?.payload?.trim();
+    if (launchPayload != null && launchPayload.isNotEmpty) {
+      final handler = _onNotificationTap;
+      if (handler != null) {
+        unawaited(handler(launchPayload));
+      }
+    }
     await _plugin
         .resolvePlatformSpecificImplementation<
           AndroidFlutterLocalNotificationsPlugin
@@ -78,7 +107,7 @@ class ChatLocalNotifications {
       'Incoming $callType call',
       'from $callerLabel',
       details,
-      payload: callId,
+      payload: 'call:$callId',
     );
   }
 }

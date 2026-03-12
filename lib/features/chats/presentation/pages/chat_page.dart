@@ -5,9 +5,7 @@ import 'dart:math' as math;
 
 import 'package:chatify/app/di/injection.dart';
 import 'package:chatify/core/common/app_logger.dart';
-import 'package:chatify/core/common/log_share_service.dart';
 import 'package:chatify/core/common/result.dart';
-import 'package:chatify/core/data/repositories/in_memory_message_repository.dart';
 import 'package:chatify/core/data/services/device_identity_service.dart';
 import 'package:chatify/core/data/services/user_privacy_service.dart';
 import 'package:chatify/core/crypto/crypto_engine.dart';
@@ -20,6 +18,10 @@ import 'package:chatify/core/domain/repositories/conversation_repository.dart';
 import 'package:chatify/core/domain/repositories/message_repository.dart';
 import 'package:chatify/core/network/firebase_paths.dart';
 import 'package:chatify/features/calls/presentation/pages/in_call_page.dart';
+import 'package:chatify/features/chats/data/repositories/message_repository_fallback.dart';
+import 'package:chatify/features/chats/data/services/chat_preferences_service.dart';
+import 'package:chatify/features/chats/data/services/scheduled_message_service.dart';
+import 'package:chatify/features/chats/domain/enums/chat_theme_style.dart';
 import 'package:chatify/features/chats/domain/usecases/send_text_message_use_case.dart';
 import 'package:chatify/features/chats/presentation/bloc/chat_thread_cubit.dart';
 import 'package:chatify/features/chats/presentation/widgets/group_creation_sheet.dart';
@@ -40,8 +42,6 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:uuid/uuid.dart';
 
-final InMemoryMessageRepository _fallbackMessageRepository =
-    InMemoryMessageRepository();
 const String _supabaseUrl = String.fromEnvironment(
   'SUPABASE_URL',
   defaultValue: 'https://uhovvyhmfqogjrayqigl.supabase.co',
@@ -92,7 +92,6 @@ class _ChatPageState extends State<ChatPage> {
   bool _peerOnline = false;
   bool _peerAllowsLastSeen = true;
   bool _isTypingPublished = false;
-  bool _sharingLogs = false;
   String? _lastUploadFailureReason;
   DateTime? _voiceRecordingStartedAt;
   DateTime? _peerLastSeenAt;
@@ -100,7 +99,7 @@ class _ChatPageState extends State<ChatPage> {
   Duration _activeVoicePosition = Duration.zero;
   Duration _activeVoiceDuration = Duration.zero;
   bool _isVoicePlaying = false;
-  _ChatTheme _chatTheme = _ChatTheme.defaultTheme;
+  ChatThemeStyle _chatTheme = ChatThemeStyle.defaultTheme;
   String _conversationTitle = '';
   bool _isGroupConversation = false;
   DateTime? _conversationCreatedAt;
@@ -131,6 +130,7 @@ class _ChatPageState extends State<ChatPage> {
     )..start(widget.conversationId);
     _messagesScrollController.addListener(_onMessagesScroll);
     _attachVoicePlayerListeners();
+    unawaited(_loadChatThemePreference());
     unawaited(_initRealtimeSignals());
   }
 
@@ -140,6 +140,7 @@ class _ChatPageState extends State<ChatPage> {
     if (oldWidget.conversationId != widget.conversationId) {
       _peerProfileSubscription?.cancel();
       _conversationTitle = _bootstrapConversationTitle();
+      _chatTheme = ChatThemeStyle.defaultTheme;
       _isGroupConversation = false;
       _conversationCreatedAt = null;
       _conversationMemberIds = const <String>[];
@@ -149,6 +150,7 @@ class _ChatPageState extends State<ChatPage> {
       _lastObservedMessagesCount = 0;
       _chatThreadCubit.start(widget.conversationId);
       unawaited(_resetVoicePlayback());
+      unawaited(_loadChatThemePreference());
       unawaited(_initRealtimeSignals());
     }
   }
@@ -317,14 +319,6 @@ class _ChatPageState extends State<ChatPage> {
                       value: _ChatMenuAction.clearChat,
                       child: Text(_tr(en: 'Clear chat', ar: 'مسح الدردشة')),
                     ),
-                    PopupMenuItem(
-                      value: _ChatMenuAction.exportDebugLogs,
-                      child: Text(
-                        _sharingLogs
-                            ? 'Preparing debug logs...'
-                            : 'Export debug logs',
-                      ),
-                    ),
                   ]);
                   return items;
                 },
@@ -435,10 +429,9 @@ class _ChatPageState extends State<ChatPage> {
                                               vertical: 4,
                                             ),
                                             decoration: BoxDecoration(
-                                              color: Theme.of(context)
-                                                  .colorScheme
-                                                  .surface
-                                                  .withValues(alpha: 0.45),
+                                              color: _chatSoftSurfaceColor(
+                                                context,
+                                              ).withValues(alpha: 0.72),
                                               borderRadius:
                                                   BorderRadius.circular(8),
                                             ),
@@ -495,9 +488,7 @@ class _ChatPageState extends State<ChatPage> {
                                 vertical: 8,
                               ),
                               decoration: BoxDecoration(
-                                color: Theme.of(
-                                  context,
-                                ).colorScheme.surfaceContainerHighest,
+                                color: _chatNeutralSurfaceColor(context),
                                 borderRadius: BorderRadius.circular(10),
                               ),
                               child: Row(
@@ -525,9 +516,7 @@ class _ChatPageState extends State<ChatPage> {
                                 vertical: 10,
                               ),
                               decoration: BoxDecoration(
-                                color: Theme.of(
-                                  context,
-                                ).colorScheme.surfaceContainerHighest,
+                                color: _chatNeutralSurfaceColor(context),
                                 borderRadius: BorderRadius.circular(10),
                               ),
                               child: const Text(
@@ -536,58 +525,100 @@ class _ChatPageState extends State<ChatPage> {
                               ),
                             )
                           else
-                            Row(
-                              children: [
-                                IconButton(
-                                  tooltip: 'Attach',
-                                  onPressed: state.sending
-                                      ? null
-                                      : _openAttachmentSheet,
-                                  icon: const Icon(Icons.attach_file),
-                                ),
-                                Expanded(
-                                  child: TextField(
-                                    controller: _messageController,
-                                    textInputAction: TextInputAction.send,
-                                    decoration: const InputDecoration(
-                                      hintText: 'Type message',
+                            ValueListenableBuilder<TextEditingValue>(
+                              valueListenable: _messageController,
+                              builder: (context, composerValue, _) {
+                                final hasComposerText = composerValue.text
+                                    .trim()
+                                    .isNotEmpty;
+                                return Row(
+                                  children: [
+                                    IconButton(
+                                      tooltip: 'Attach',
+                                      onPressed: state.sending
+                                          ? null
+                                          : _openAttachmentSheet,
+                                      icon: const Icon(Icons.attach_file),
                                     ),
-                                    onChanged: _onComposerChanged,
-                                    onSubmitted: (_) => _sendMessage(),
-                                  ),
-                                ),
-                                IconButton(
-                                  tooltip: _isRecordingVoice
-                                      ? 'Stop recording'
-                                      : 'Voice note',
-                                  onPressed: state.sending
-                                      ? null
-                                      : _sendVoiceNote,
-                                  icon: Icon(
-                                    _isRecordingVoice
-                                        ? Icons.stop_circle_outlined
-                                        : Icons.mic_none_outlined,
-                                    color: _isRecordingVoice
-                                        ? Theme.of(context).colorScheme.error
-                                        : null,
-                                  ),
-                                ),
-                                const SizedBox(width: 4),
-                                IconButton.filled(
-                                  onPressed: state.sending
-                                      ? null
-                                      : _sendMessage,
-                                  icon: state.sending
-                                      ? const SizedBox(
-                                          width: 18,
-                                          height: 18,
-                                          child: CircularProgressIndicator(
-                                            strokeWidth: 2,
+                                    Expanded(
+                                      child: TextField(
+                                        controller: _messageController,
+                                        textInputAction: TextInputAction.send,
+                                        decoration: InputDecoration(
+                                          hintText: 'Type message',
+                                          filled: true,
+                                          fillColor: _chatComposerFillColor(
+                                            context,
                                           ),
-                                        )
-                                      : const Icon(Icons.send),
-                                ),
-                              ],
+                                          contentPadding:
+                                              const EdgeInsets.symmetric(
+                                                horizontal: 16,
+                                                vertical: 14,
+                                              ),
+                                          border: OutlineInputBorder(
+                                            borderRadius: BorderRadius.circular(
+                                              18,
+                                            ),
+                                            borderSide: BorderSide.none,
+                                          ),
+                                        ),
+                                        onChanged: _onComposerChanged,
+                                        onSubmitted: (_) => _sendMessage(),
+                                      ),
+                                    ),
+                                    IconButton(
+                                      tooltip: _isRecordingVoice
+                                          ? 'Stop recording'
+                                          : 'Voice note',
+                                      onPressed: state.sending
+                                          ? null
+                                          : _sendVoiceNote,
+                                      icon: Icon(
+                                        _isRecordingVoice
+                                            ? Icons.stop_circle_outlined
+                                            : Icons.mic_none_outlined,
+                                        color: _isRecordingVoice
+                                            ? Theme.of(
+                                                context,
+                                              ).colorScheme.error
+                                            : null,
+                                      ),
+                                    ),
+                                    IconButton(
+                                      tooltip: _tr(
+                                        en: 'Schedule message',
+                                        ar: 'جدولة الرسالة',
+                                      ),
+                                      onPressed:
+                                          state.sending || !hasComposerText
+                                          ? null
+                                          : () => _scheduleMessage(
+                                              replyToMessageId:
+                                                  state.replyingTo?.id,
+                                            ),
+                                      icon: const Icon(
+                                        Icons.schedule_send_outlined,
+                                      ),
+                                    ),
+                                    const SizedBox(width: 4),
+                                    IconButton.filled(
+                                      onPressed:
+                                          state.sending || !hasComposerText
+                                          ? null
+                                          : _sendMessage,
+                                      icon: state.sending
+                                          ? const SizedBox(
+                                              width: 18,
+                                              height: 18,
+                                              child: CircularProgressIndicator(
+                                                strokeWidth: 2,
+                                              ),
+                                            )
+                                          : const Icon(Icons.send),
+                                    ),
+                                  ],
+                                );
+                              },
                             ),
                         ],
                       );
@@ -668,7 +699,7 @@ class _ChatPageState extends State<ChatPage> {
       margin: const EdgeInsets.fromLTRB(12, 8, 12, 0),
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
       decoration: BoxDecoration(
-        color: Theme.of(context).colorScheme.surfaceContainerHighest,
+        color: _chatNeutralSurfaceColor(context),
         borderRadius: BorderRadius.circular(12),
       ),
       child: Column(
@@ -994,6 +1025,18 @@ class _ChatPageState extends State<ChatPage> {
     return null;
   }
 
+  Future<void> _loadChatThemePreference() async {
+    final conversationId = widget.conversationId;
+    final theme = await ChatPreferencesService.instance.loadTheme(
+      userId: _resolveCurrentUserId(),
+      conversationId: conversationId,
+    );
+    if (!mounted || widget.conversationId != conversationId) {
+      return;
+    }
+    setState(() => _chatTheme = theme);
+  }
+
   Future<void> _sendMessage() async {
     if (_isBlocked) {
       _showSnack('Unblock this contact first');
@@ -1005,6 +1048,99 @@ class _ChatPageState extends State<ChatPage> {
       _onComposerChanged('');
       await _setTypingState(false);
     }
+  }
+
+  Future<void> _scheduleMessage({String? replyToMessageId}) async {
+    if (_isBlocked) {
+      _showSnack('Unblock this contact first');
+      return;
+    }
+
+    final messageText = _messageController.text.trim();
+    if (messageText.isEmpty) {
+      _showSnack(_tr(en: 'Write a message first', ar: 'اكتب رسالة الأول'));
+      return;
+    }
+
+    final scheduledFor = await _pickScheduledDateTime();
+    if (!mounted || scheduledFor == null) {
+      return;
+    }
+
+    await ScheduledMessageService.instance.scheduleTextMessage(
+      conversationId: widget.conversationId,
+      senderId: _resolveCurrentUserId(),
+      plaintext: messageText,
+      scheduledFor: scheduledFor,
+      replyToMessageId: replyToMessageId,
+    );
+
+    if (!mounted) {
+      return;
+    }
+
+    _messageController.clear();
+    _chatThreadCubit.cancelReply();
+    _onComposerChanged('');
+    await _setTypingState(false);
+    _showSnack(
+      _tr(
+        en: 'Message scheduled for ${_formatScheduledDateTime(scheduledFor)}',
+        ar: 'تمت جدولة الرسالة إلى ${_formatScheduledDateTime(scheduledFor)}',
+      ),
+    );
+  }
+
+  Future<DateTime?> _pickScheduledDateTime() async {
+    final now = DateTime.now();
+    final initialDate = now.add(const Duration(hours: 1));
+
+    final selectedDate = await showDatePicker(
+      context: context,
+      initialDate: initialDate,
+      firstDate: DateTime(now.year, now.month, now.day),
+      lastDate: now.add(const Duration(days: 365)),
+    );
+    if (!mounted || selectedDate == null) {
+      return null;
+    }
+
+    final selectedTime = await showTimePicker(
+      context: context,
+      initialTime: TimeOfDay.fromDateTime(initialDate),
+    );
+    if (!mounted || selectedTime == null) {
+      return null;
+    }
+
+    final scheduledFor = DateTime(
+      selectedDate.year,
+      selectedDate.month,
+      selectedDate.day,
+      selectedTime.hour,
+      selectedTime.minute,
+    );
+
+    if (!scheduledFor.isAfter(now)) {
+      _showSnack(
+        _tr(
+          en: 'Choose a future time for the scheduled message',
+          ar: 'اختار وقت في المستقبل للرسالة المجدولة',
+        ),
+      );
+      return null;
+    }
+
+    return scheduledFor;
+  }
+
+  String _formatScheduledDateTime(DateTime value) {
+    final local = value.toLocal();
+    final day = local.day.toString().padLeft(2, '0');
+    final month = local.month.toString().padLeft(2, '0');
+    final hour = local.hour.toString().padLeft(2, '0');
+    final minute = local.minute.toString().padLeft(2, '0');
+    return '$day/$month $hour:$minute';
   }
 
   Future<void> _onChatMenuAction(_ChatMenuAction action) async {
@@ -1050,25 +1186,7 @@ class _ChatPageState extends State<ChatPage> {
       case _ChatMenuAction.clearChat:
         await _clearChat();
         break;
-      case _ChatMenuAction.exportDebugLogs:
-        await _exportDebugLogs();
-        break;
     }
-  }
-
-  Future<void> _exportDebugLogs() async {
-    if (_sharingLogs) {
-      return;
-    }
-    if (mounted) {
-      setState(() => _sharingLogs = true);
-    }
-    final result = await shareLatestDebugLogs(action: 'chat.logs.share');
-    if (!mounted) {
-      return;
-    }
-    setState(() => _sharingLogs = false);
-    _showSnack(result.message);
   }
 
   Future<void> _startCall(CallType type) async {
@@ -1824,32 +1942,52 @@ class _ChatPageState extends State<ChatPage> {
   }
 
   Future<void> _changeChatTheme() async {
-    final selected = await showModalBottomSheet<_ChatTheme>(
+    final selected = await showModalBottomSheet<ChatThemeStyle>(
       context: context,
-      builder: (context) => SafeArea(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            ListTile(
-              title: const Text('Default'),
-              onTap: () => Navigator.of(context).pop(_ChatTheme.defaultTheme),
-            ),
-            ListTile(
-              title: const Text('Emerald'),
-              onTap: () => Navigator.of(context).pop(_ChatTheme.emerald),
-            ),
-            ListTile(
-              title: const Text('Sunset'),
-              onTap: () => Navigator.of(context).pop(_ChatTheme.sunset),
-            ),
-          ],
-        ),
-      ),
+      builder: (context) {
+        final isArabic = _isArabicUi();
+        return SafeArea(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: ChatThemeStyle.values
+                .map((theme) {
+                  final palette = _chatPalette(context, themeOverride: theme);
+                  return ListTile(
+                    leading: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        CircleAvatar(
+                          radius: 12,
+                          backgroundColor: palette.peerBubbleColor,
+                        ),
+                        const SizedBox(width: 8),
+                        CircleAvatar(
+                          radius: 12,
+                          backgroundColor: palette.myBubbleColor,
+                        ),
+                      ],
+                    ),
+                    title: Text(theme.localizedLabel(isArabic: isArabic)),
+                    trailing: _chatTheme == theme
+                        ? const Icon(Icons.check)
+                        : null,
+                    onTap: () => Navigator.of(context).pop(theme),
+                  );
+                })
+                .toList(growable: false),
+          ),
+        );
+      },
     );
     if (!mounted || selected == null) {
       return;
     }
     setState(() => _chatTheme = selected);
+    await ChatPreferencesService.instance.saveTheme(
+      userId: _resolveCurrentUserId(),
+      conversationId: widget.conversationId,
+      theme: selected,
+    );
   }
 
   Future<void> _reportContact() async {
@@ -4077,7 +4215,7 @@ class _ChatPageState extends State<ChatPage> {
       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
       decoration: BoxDecoration(
         borderRadius: BorderRadius.circular(10),
-        color: Theme.of(context).colorScheme.surfaceContainerHighest,
+        color: _chatNeutralSurfaceColor(context),
       ),
       child: Row(
         children: [
@@ -4254,20 +4392,90 @@ class _ChatPageState extends State<ChatPage> {
   }
 
   Color _myBubbleColor(BuildContext context) {
-    return switch (_chatTheme) {
-      _ChatTheme.defaultTheme => Theme.of(context).colorScheme.primaryContainer,
-      _ChatTheme.emerald => const Color(0xFFD5F2E3),
-      _ChatTheme.sunset => const Color(0xFFFFE3D1),
-    };
+    return _chatPalette(context).myBubbleColor;
   }
 
   Color _peerBubbleColor(BuildContext context) {
-    return switch (_chatTheme) {
-      _ChatTheme.defaultTheme => Theme.of(
-        context,
-      ).colorScheme.surfaceContainerHighest,
-      _ChatTheme.emerald => const Color(0xFFF2FBF6),
-      _ChatTheme.sunset => const Color(0xFFFFF5ED),
+    return _chatPalette(context).peerBubbleColor;
+  }
+
+  Color _chatNeutralSurfaceColor(BuildContext context) {
+    return _chatPalette(context).neutralSurfaceColor;
+  }
+
+  Color _chatSoftSurfaceColor(BuildContext context) {
+    return _chatPalette(context).softSurfaceColor;
+  }
+
+  Color _chatComposerFillColor(BuildContext context) {
+    return _chatPalette(context).composerFillColor;
+  }
+
+  _ChatThemePalette _chatPalette(
+    BuildContext context, {
+    ChatThemeStyle? themeOverride,
+  }) {
+    final theme = Theme.of(context);
+    final brightness = theme.brightness;
+    final chatTheme = themeOverride ?? _chatTheme;
+    final isDark = brightness == Brightness.dark;
+
+    return switch (chatTheme) {
+      ChatThemeStyle.defaultTheme => _ChatThemePalette(
+        myBubbleColor: theme.colorScheme.primaryContainer,
+        peerBubbleColor: theme.colorScheme.surfaceContainerHighest,
+        neutralSurfaceColor: theme.colorScheme.surfaceContainerHighest,
+        softSurfaceColor: theme.colorScheme.surfaceContainer,
+        composerFillColor: theme.colorScheme.surface,
+      ),
+      ChatThemeStyle.graphite =>
+        isDark
+            ? const _ChatThemePalette(
+                myBubbleColor: Color(0xFF284C74),
+                peerBubbleColor: Color(0xFF38414C),
+                neutralSurfaceColor: Color(0xFF2B3440),
+                softSurfaceColor: Color(0xFF202835),
+                composerFillColor: Color(0xFF17202B),
+              )
+            : const _ChatThemePalette(
+                myBubbleColor: Color(0xFFD9E9FF),
+                peerBubbleColor: Color(0xFFE3E8EE),
+                neutralSurfaceColor: Color(0xFFD8DEE6),
+                softSurfaceColor: Color(0xFFEFF3F7),
+                composerFillColor: Color(0xFFF6F8FB),
+              ),
+      ChatThemeStyle.sage =>
+        isDark
+            ? const _ChatThemePalette(
+                myBubbleColor: Color(0xFF295447),
+                peerBubbleColor: Color(0xFF37463F),
+                neutralSurfaceColor: Color(0xFF2B3933),
+                softSurfaceColor: Color(0xFF1E2A25),
+                composerFillColor: Color(0xFF16211D),
+              )
+            : const _ChatThemePalette(
+                myBubbleColor: Color(0xFFD8F0E6),
+                peerBubbleColor: Color(0xFFE1E9E3),
+                neutralSurfaceColor: Color(0xFFD6E0D8),
+                softSurfaceColor: Color(0xFFEEF5EF),
+                composerFillColor: Color(0xFFF6FAF6),
+              ),
+      ChatThemeStyle.sunset =>
+        isDark
+            ? const _ChatThemePalette(
+                myBubbleColor: Color(0xFF6A4330),
+                peerBubbleColor: Color(0xFF4B403B),
+                neutralSurfaceColor: Color(0xFF3E342F),
+                softSurfaceColor: Color(0xFF2A2320),
+                composerFillColor: Color(0xFF1F1A18),
+              )
+            : const _ChatThemePalette(
+                myBubbleColor: Color(0xFFFFE4D2),
+                peerBubbleColor: Color(0xFFECE2DC),
+                neutralSurfaceColor: Color(0xFFE4D8D1),
+                softSurfaceColor: Color(0xFFFAF2EC),
+                composerFillColor: Color(0xFFFFF8F4),
+              ),
     };
   }
 
@@ -4330,12 +4538,12 @@ class _ChatPageState extends State<ChatPage> {
 
   MessageRepository _resolveMessageRepository() {
     if (Firebase.apps.isEmpty) {
-      return _fallbackMessageRepository;
+      return fallbackMessageRepository;
     }
     try {
       return getIt<MessageRepository>();
     } catch (_) {
-      return _fallbackMessageRepository;
+      return fallbackMessageRepository;
     }
   }
 
@@ -4442,7 +4650,21 @@ enum _MessageAction {
 
 enum _DeleteScope { forMe, forEveryone }
 
-enum _ChatTheme { defaultTheme, emerald, sunset }
+class _ChatThemePalette {
+  const _ChatThemePalette({
+    required this.myBubbleColor,
+    required this.peerBubbleColor,
+    required this.neutralSurfaceColor,
+    required this.softSurfaceColor,
+    required this.composerFillColor,
+  });
+
+  final Color myBubbleColor;
+  final Color peerBubbleColor;
+  final Color neutralSurfaceColor;
+  final Color softSurfaceColor;
+  final Color composerFillColor;
+}
 
 enum _ChatMenuAction {
   createGroup,
@@ -4454,7 +4676,6 @@ enum _ChatMenuAction {
   reportContact,
   toggleBlock,
   clearChat,
-  exportDebugLogs,
 }
 
 enum _AttachmentAction { image, video, file, location, contact }

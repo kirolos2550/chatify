@@ -1,7 +1,7 @@
 import 'package:chatify/app/di/injection.dart';
 import 'package:chatify/app/localization/app_locale_controller.dart';
+import 'package:chatify/app/theme/app_theme_controller.dart';
 import 'package:chatify/core/common/app_logger.dart';
-import 'package:chatify/core/common/log_share_service.dart';
 import 'package:chatify/core/common/result.dart';
 import 'package:chatify/core/data/services/user_privacy_service.dart';
 import 'package:chatify/core/domain/repositories/auth_repository.dart';
@@ -23,7 +23,6 @@ class _SettingsPageState extends State<SettingsPage> {
   bool _lastSeenVisible = true;
   bool _typingVisibilityEnabled = true;
   bool _privacyUpdating = false;
-  bool _sharingLogs = false;
 
   bool get _hasAuthRepository =>
       getIt.isRegistered<AuthRepository>() && Firebase.apps.isNotEmpty;
@@ -47,6 +46,7 @@ class _SettingsPageState extends State<SettingsPage> {
         (user?.phoneNumber?.trim().isNotEmpty ?? false)
         ? user!.phoneNumber!.trim()
         : l10n.profileSubtitle;
+    final currentThemeMode = AppThemeController.instance.themeMode;
 
     return _SettingsScaffold(
       profileName: resolvedProfileName,
@@ -61,11 +61,11 @@ class _SettingsPageState extends State<SettingsPage> {
       onLastSeenChanged: (value) => _updatePrivacy(lastSeenVisible: value),
       onTypingVisibilityChanged: (value) =>
           _updatePrivacy(typingVisibilityEnabled: value),
+      currentThemeMode: currentThemeMode,
+      onChangeThemeMode: _changeThemeMode,
       currentLanguageCode: AppLocaleController.instance.localeCode,
       onChangeLanguage: _changeLanguage,
       onOpenProfile: _openMyProfile,
-      sharingLogs: _sharingLogs,
-      onExportLogs: _exportDebugLogs,
       onSignOut: _signOut,
     );
   }
@@ -254,6 +254,53 @@ class _SettingsPageState extends State<SettingsPage> {
     }
   }
 
+  Future<void> _changeThemeMode() async {
+    final selectedMode = await showModalBottomSheet<ThemeMode>(
+      context: context,
+      builder: (context) {
+        final l10n = AppLocalizations.of(context)!;
+        final currentMode = AppThemeController.instance.themeMode;
+        return SafeArea(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              ListTile(
+                title: Text(l10n.themeSystem),
+                trailing: currentMode == ThemeMode.system
+                    ? const Icon(Icons.check)
+                    : null,
+                onTap: () => Navigator.of(context).pop(ThemeMode.system),
+              ),
+              ListTile(
+                title: Text(l10n.themeLight),
+                trailing: currentMode == ThemeMode.light
+                    ? const Icon(Icons.check)
+                    : null,
+                onTap: () => Navigator.of(context).pop(ThemeMode.light),
+              ),
+              ListTile(
+                title: Text(l10n.themeDark),
+                trailing: currentMode == ThemeMode.dark
+                    ? const Icon(Icons.check)
+                    : null,
+                onTap: () => Navigator.of(context).pop(ThemeMode.dark),
+              ),
+            ],
+          ),
+        );
+      },
+    );
+
+    if (!mounted || selectedMode == null) {
+      return;
+    }
+
+    await AppThemeController.instance.setThemeMode(selectedMode);
+    if (mounted) {
+      setState(() {});
+    }
+  }
+
   Future<void> _signOut() async {
     AppLogger.breadcrumb(
       'settings.sign_out.start',
@@ -281,18 +328,6 @@ class _SettingsPageState extends State<SettingsPage> {
     context.go('/auth');
   }
 
-  Future<void> _exportDebugLogs() async {
-    if (_sharingLogs) {
-      return;
-    }
-    setState(() => _sharingLogs = true);
-    final result = await shareLatestDebugLogs(action: 'settings.logs.share');
-    if (mounted) {
-      _showSnack(result.message);
-      setState(() => _sharingLogs = false);
-    }
-  }
-
   void _showSnack(String message) {
     if (!mounted) {
       return;
@@ -315,11 +350,11 @@ class _SettingsScaffold extends StatelessWidget {
     required this.onReadReceiptsChanged,
     required this.onLastSeenChanged,
     required this.onTypingVisibilityChanged,
+    required this.currentThemeMode,
+    required this.onChangeThemeMode,
     required this.currentLanguageCode,
     required this.onChangeLanguage,
     required this.onOpenProfile,
-    required this.sharingLogs,
-    required this.onExportLogs,
     required this.onSignOut,
   });
 
@@ -333,16 +368,21 @@ class _SettingsScaffold extends StatelessWidget {
   final ValueChanged<bool> onReadReceiptsChanged;
   final ValueChanged<bool> onLastSeenChanged;
   final ValueChanged<bool> onTypingVisibilityChanged;
+  final ThemeMode currentThemeMode;
+  final Future<void> Function() onChangeThemeMode;
   final String currentLanguageCode;
   final Future<void> Function() onChangeLanguage;
   final Future<void> Function() onOpenProfile;
-  final bool sharingLogs;
-  final Future<void> Function() onExportLogs;
   final Future<void> Function() onSignOut;
 
   @override
   Widget build(BuildContext context) {
     final l10n = AppLocalizations.of(context)!;
+    final themeLabel = switch (currentThemeMode) {
+      ThemeMode.light => l10n.themeLight,
+      ThemeMode.dark => l10n.themeDark,
+      ThemeMode.system => l10n.themeSystem,
+    };
     final languageLabel = switch (currentLanguageCode) {
       'ar' => l10n.languageArabic,
       'en' => l10n.languageEnglish,
@@ -366,6 +406,12 @@ class _SettingsScaffold extends StatelessWidget {
             onTap: onOpenProfile,
           ),
           const Divider(height: 0),
+          ListTile(
+            leading: const Icon(Icons.dark_mode_outlined),
+            title: Text(l10n.theme),
+            subtitle: Text(themeLabel),
+            onTap: onChangeThemeMode,
+          ),
           ListTile(
             leading: const Icon(Icons.language_outlined),
             title: Text(l10n.language),
@@ -397,18 +443,6 @@ class _SettingsScaffold extends StatelessWidget {
             leading: const Icon(Icons.backup_outlined),
             title: Text(l10n.encryptedBackup),
             onTap: () => context.push('/backup'),
-          ),
-          ListTile(
-            leading: sharingLogs
-                ? const SizedBox(
-                    width: 20,
-                    height: 20,
-                    child: CircularProgressIndicator(strokeWidth: 2),
-                  )
-                : const Icon(Icons.bug_report_outlined),
-            title: const Text('Export debug logs'),
-            subtitle: const Text('Share latest session logs for diagnostics'),
-            onTap: sharingLogs ? null : onExportLogs,
           ),
           ListTile(
             leading: const Icon(Icons.storefront_outlined),

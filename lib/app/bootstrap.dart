@@ -6,10 +6,18 @@ import 'package:chatify/app/emulator_port_probe.dart';
 import 'package:chatify/app/flavor.dart';
 import 'package:chatify/app/localization/app_locale_controller.dart';
 import 'package:chatify/app/router/app_router.dart';
+import 'package:chatify/app/theme/app_theme_controller.dart';
 import 'package:chatify/core/common/app_logger.dart';
+import 'package:chatify/core/crypto/crypto_engine.dart';
+import 'package:chatify/core/crypto/signal_crypto_engine.dart';
+import 'package:chatify/core/data/services/device_identity_service.dart';
+import 'package:chatify/core/domain/repositories/message_repository.dart';
 import 'package:chatify/core/network/firebase_paths.dart';
 import 'package:chatify/core/notifications/chat_local_notifications.dart';
 import 'package:chatify/core/notifications/message_notification_orchestrator.dart';
+import 'package:chatify/features/chats/data/repositories/message_repository_fallback.dart';
+import 'package:chatify/features/chats/data/services/scheduled_message_service.dart';
+import 'package:chatify/features/chats/domain/usecases/send_text_message_use_case.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:cloud_functions/cloud_functions.dart';
 import 'package:firebase_auth/firebase_auth.dart';
@@ -20,6 +28,7 @@ import 'package:firebase_storage/firebase_storage.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart' hide User;
+import 'package:uuid/uuid.dart';
 
 const bool _useFirebaseEmulators = bool.fromEnvironment(
   'USE_FIREBASE_EMULATORS',
@@ -55,6 +64,7 @@ const Duration _uiHangThreshold = Duration(seconds: 4);
 StreamSubscription<User?>? _incomingCallAuthSubscription;
 StreamSubscription<QuerySnapshot<Map<String, dynamic>>>?
 _incomingCallSubscription;
+StreamSubscription<User?>? _scheduledMessageAuthSubscription;
 final Set<String> _notifiedIncomingCallIds = <String>{};
 
 Future<void> bootstrap(AppFlavor flavor) async {
@@ -98,7 +108,10 @@ Future<void> bootstrap(AppFlavor flavor) async {
       await _configureCrashlytics(flavor);
       await _configureFirebaseRuntime(flavor);
       await configureDependencies(flavor);
+      await _initLocalNotificationRouting();
       await AppLocaleController.instance.load();
+      await AppThemeController.instance.load();
+      await _initScheduledMessages();
       runApp(ChatifyApp(flavor: flavor));
       MessageNotificationOrchestrator.instance.start();
       _startUiHangWatchdog();
@@ -122,6 +135,7 @@ Future<void> bootstrap(AppFlavor flavor) async {
               unawaited(AppLogger.flush());
               break;
             case AppLifecycleState.resumed:
+              unawaited(ScheduledMessageService.instance.processDueMessages());
               break;
           }
         },
@@ -132,6 +146,8 @@ Future<void> bootstrap(AppFlavor flavor) async {
           _incomingCallSubscription = null;
           _incomingCallAuthSubscription?.cancel();
           _incomingCallAuthSubscription = null;
+          _scheduledMessageAuthSubscription?.cancel();
+          _scheduledMessageAuthSubscription = null;
           _notifiedIncomingCallIds.clear();
           unawaited(MessageNotificationOrchestrator.instance.stop());
           unawaited(AppLogger.flushAndClose());
@@ -238,6 +254,104 @@ void _startIncomingCallAlerts() {
       });
 }
 
+Future<void> _initScheduledMessages() async {
+  await ScheduledMessageService.instance.initialize(
+    dispatcher: _dispatchScheduledMessage,
+    currentUserIdProvider: _scheduledMessageCurrentUserId,
+  );
+
+  _scheduledMessageAuthSubscription?.cancel();
+  if (Firebase.apps.isEmpty) {
+    return;
+  }
+
+  _scheduledMessageAuthSubscription = FirebaseAuth.instance
+      .authStateChanges()
+      .listen((_) {
+        unawaited(ScheduledMessageService.instance.processDueMessages());
+      });
+}
+
+String? _scheduledMessageCurrentUserId() {
+  if (Firebase.apps.isEmpty) {
+    return 'local-debug-user';
+  }
+  return FirebaseAuth.instance.currentUser?.uid;
+}
+
+Future<bool> _dispatchScheduledMessage(ScheduledMessageTask task) async {
+  final currentUserId = _scheduledMessageCurrentUserId();
+  if (currentUserId == null || currentUserId.trim() != task.senderId.trim()) {
+    return false;
+  }
+
+  try {
+    final useCase = _resolveScheduledSendTextMessageUseCase();
+    final result = await useCase(
+      SendTextMessageParams(
+        conversationId: task.conversationId,
+        senderId: task.senderId,
+        plaintext: task.plaintext,
+        peerDeviceId: 'peer-${task.conversationId}',
+        replyToMessageId: task.replyToMessageId,
+      ),
+    );
+    return result.error == null;
+  } catch (error, stackTrace) {
+    AppLogger.error(
+      'Scheduled message dispatch failed',
+      error,
+      stackTrace,
+      event: 'chat.schedule.dispatch_failure',
+      action: 'chat.schedule',
+      metadata: <String, Object?>{
+        'conversationId': task.conversationId,
+        'scheduledFor': task.scheduledFor.toIso8601String(),
+      },
+    );
+    return false;
+  }
+}
+
+SendTextMessageUseCase _resolveScheduledSendTextMessageUseCase() {
+  if (Firebase.apps.isNotEmpty) {
+    try {
+      return getIt<SendTextMessageUseCase>();
+    } catch (_) {
+      // Fall back to a lightweight local sender below.
+    }
+  }
+
+  return SendTextMessageUseCase(
+    _resolveScheduledMessageRepository(),
+    _resolveScheduledCryptoEngine(),
+    getIt<DeviceIdentityService>(),
+    getIt<Uuid>(),
+  );
+}
+
+MessageRepository _resolveScheduledMessageRepository() {
+  if (Firebase.apps.isEmpty) {
+    return fallbackMessageRepository;
+  }
+  try {
+    return getIt<MessageRepository>();
+  } catch (_) {
+    return fallbackMessageRepository;
+  }
+}
+
+CryptoEngine _resolveScheduledCryptoEngine() {
+  if (getIt.isRegistered<CryptoEngine>()) {
+    try {
+      return getIt<CryptoEngine>();
+    } catch (_) {
+      // Fall back to the lightweight implementation below.
+    }
+  }
+  return SignalCryptoEngine();
+}
+
 Future<void> _showIncomingCallNotification({
   required String callId,
   required String callerLabel,
@@ -248,7 +362,9 @@ Future<void> _showIncomingCallNotification({
   }
   try {
     final notifications = getIt<ChatLocalNotifications>();
-    await notifications.initialize();
+    await notifications.initialize(
+      onNotificationTap: _handleLocalNotificationTap,
+    );
     await notifications.showIncomingCallAlert(
       id: callId.hashCode & 0x7fffffff,
       callerLabel: callerLabel,
@@ -265,6 +381,44 @@ Future<void> _showIncomingCallNotification({
       metadata: <String, Object?>{'callId': callId},
     );
   }
+}
+
+Future<void> _initLocalNotificationRouting() async {
+  if (!getIt.isRegistered<ChatLocalNotifications>()) {
+    return;
+  }
+  try {
+    final notifications = getIt<ChatLocalNotifications>();
+    await notifications.initialize(
+      onNotificationTap: _handleLocalNotificationTap,
+    );
+  } catch (error, stackTrace) {
+    AppLogger.error(
+      'Local notification routing init failed',
+      error,
+      stackTrace,
+      event: 'notifications.local.init_failure',
+      action: 'notifications.local.init',
+    );
+  }
+}
+
+Future<void> _handleLocalNotificationTap(String payload) async {
+  if (!payload.startsWith('call:')) {
+    return;
+  }
+  final callId = payload.substring('call:'.length).trim();
+  if (callId.isEmpty) {
+    return;
+  }
+  WidgetsBinding.instance.addPostFrameCallback((_) {
+    final targetPath = '/call/${Uri.encodeComponent(callId)}';
+    final currentPath = AppRouter.router.state.uri.toString();
+    if (currentPath == targetPath) {
+      return;
+    }
+    AppRouter.router.push(targetPath);
+  });
 }
 
 Future<void> _initFirebase() async {

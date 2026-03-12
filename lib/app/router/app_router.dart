@@ -1,6 +1,7 @@
 import 'package:chatify/features/auth/presentation/pages/auth_page.dart';
 import 'package:chatify/features/backup/presentation/pages/backup_page.dart';
 import 'package:chatify/features/business/presentation/pages/whatsapp_business_page.dart';
+import 'package:chatify/features/calls/presentation/pages/call_details_page.dart';
 import 'package:chatify/features/calls/presentation/pages/calls_page.dart';
 import 'package:chatify/features/chats/presentation/pages/chat_list_page.dart';
 import 'package:chatify/features/chats/presentation/pages/chat_page.dart';
@@ -81,6 +82,12 @@ abstract final class AppRouter {
         builder: (context, state) => const LinkedDevicesPage(),
       ),
       GoRoute(path: '/backup', builder: (context, state) => const BackupPage()),
+      GoRoute(
+        path: '/call/:id',
+        builder: (context, state) => CallDetailsPage(
+          callId: Uri.decodeComponent(state.pathParameters['id'] ?? ''),
+        ),
+      ),
     ],
   );
 

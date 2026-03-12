@@ -1,9 +1,14 @@
+import 'dart:async';
+
 import 'package:chatify/app/di/injection.dart';
 import 'package:chatify/core/common/app_logger.dart';
 import 'package:chatify/core/domain/entities/call_session.dart';
 import 'package:chatify/core/domain/enums/chat_enums.dart';
+import 'package:chatify/core/domain/repositories/contacts_repository.dart';
 import 'package:chatify/features/calls/presentation/bloc/calls_cubit.dart';
 import 'package:chatify/features/calls/presentation/pages/in_call_page.dart';
+import 'package:chatify/features/calls/presentation/support/call_participant_label_resolver.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:flutter/material.dart';
@@ -17,6 +22,13 @@ class CallsPage extends StatefulWidget {
 }
 
 class _CallsPageState extends State<CallsPage> {
+  late final CallParticipantLabelResolver _participantLabelResolver =
+      CallParticipantLabelResolver(
+        contactsRepository: getIt.isRegistered<ContactsRepository>()
+            ? getIt<ContactsRepository>()
+            : null,
+        firestore: Firebase.apps.isNotEmpty ? FirebaseFirestore.instance : null,
+      );
   final List<_LocalCallEntry> _localCalls = [
     const _LocalCallEntry(
       callId: 'local_call_1',
@@ -41,6 +53,12 @@ class _CallsPageState extends State<CallsPage> {
       getIt.isRegistered<CallsCubit>() && Firebase.apps.isNotEmpty;
 
   @override
+  void initState() {
+    super.initState();
+    unawaited(_loadParticipantContactLabels());
+  }
+
+  @override
   Widget build(BuildContext context) {
     if (!_hasWiredCalls) {
       return _CallsScaffold(
@@ -59,6 +77,7 @@ class _CallsPageState extends State<CallsPage> {
       create: (_) => getIt<CallsCubit>(),
       child: BlocConsumer<CallsCubit, CallsState>(
         listener: (context, state) {
+          _ensureParticipantLabelsLoaded(state.calls);
           if (state.errorMessage != null) {
             AppLogger.breadcrumb(
               'calls.ui.error_shown',
@@ -71,6 +90,7 @@ class _CallsPageState extends State<CallsPage> {
           }
         },
         builder: (context, state) {
+          _ensureParticipantLabelsLoaded(state.calls);
           final entries = state.calls.map((call) {
             final participantLabels = _participantLabelsForCall(call);
             return _LocalCallEntry(
@@ -131,13 +151,16 @@ class _CallsPageState extends State<CallsPage> {
     required CallSession call,
     required List<String> participantLabels,
   }) {
-    if (call.participantIds.length > 2 || participantLabels.length > 1) {
-      return 'Group call';
+    if (participantLabels.isEmpty) {
+      return _labelForParticipantId(call.initiatorId ?? '');
     }
-    if (participantLabels.isNotEmpty) {
+    if (participantLabels.length == 1) {
       return participantLabels.first;
     }
-    return _labelForParticipantId(call.initiatorId ?? '');
+    if (participantLabels.length == 2) {
+      return '${participantLabels[0]}, ${participantLabels[1]}';
+    }
+    return '${participantLabels[0]}, ${participantLabels[1]} +${participantLabels.length - 2}';
   }
 
   List<String> _participantLabelsForCall(CallSession call) {
@@ -154,14 +177,43 @@ class _CallsPageState extends State<CallsPage> {
   }
 
   String _labelForParticipantId(String participantId) {
-    final value = participantId.trim();
-    if (value.isEmpty) {
-      return 'Unknown';
+    return _participantLabelResolver.resolveLabel(
+      participantId,
+      currentUserId: _currentUserId,
+    );
+  }
+
+  Future<void> _loadParticipantContactLabels() async {
+    final didChange = await _participantLabelResolver.preloadContacts();
+    if (!mounted || !didChange) {
+      return;
     }
-    if (value.length <= 16) {
-      return value;
+    setState(() {});
+  }
+
+  void _ensureParticipantLabelsLoaded(Iterable<CallSession> calls) {
+    final currentUserId = _currentUserId;
+    final participantIds = calls
+        .expand((call) => call.participantIds)
+        .map((participantId) => participantId.trim())
+        .where(
+          (participantId) =>
+              participantId.isNotEmpty && participantId != currentUserId,
+        )
+        .toSet();
+    if (participantIds.isEmpty) {
+      return;
     }
-    return '${value.substring(0, 16)}...';
+    unawaited(_loadRemoteParticipantLabels(participantIds));
+  }
+
+  Future<void> _loadRemoteParticipantLabels(Iterable<String> userIds) async {
+    final didChange = await _participantLabelResolver
+        .ensureRemoteProfilesLoaded(userIds);
+    if (!mounted || !didChange) {
+      return;
+    }
+    setState(() {});
   }
 
   Future<void> _startLocalCall(

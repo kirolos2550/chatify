@@ -17,6 +17,11 @@ Production-oriented Flutter messaging foundation aligned with:
 - Privacy controls persisted in Firebase (read receipts, last seen, typing visibility)
 - In-call experience UI for direct/group calls with call controls
 - Reaction badge overlay + reaction participants sheet (who reacted)
+- App-wide theme mode toggle (system / light / dark)
+- Per-chat theme palettes with persisted bubble and surface styling
+- Scheduled text messages with local delivery on next due app session
+- Calls list/contact resolution using saved mobile contact name or phone number
+- Incoming call notifications that reopen the exact call details screen
 
 ## Project Structure
 
@@ -156,7 +161,26 @@ Verify token must match `WHATSAPP_VERIFY_TOKEN`.
 6. Enter phone numbers in E.164 format (example: `+2010XXXXXXXX`).
 7. After successful OTP verification, the app now auto-creates/updates `users/{uid}` in Firestore.
 
-## Latest Bug Fixes (v1.0.8+9)
+## Latest Updates (v1.0.9+10)
+
+- Added app-wide appearance mode selection:
+  - New Settings option for `System`, `Light`, and `Dark`.
+  - Theme choice is persisted across app restarts.
+- Added per-chat theme customization:
+  - `Change chat theme` now applies real palette changes inside the chat UI.
+  - Neutral/gray surfaces, composer area, and message bubbles now adapt per chat.
+  - Chat theme selection is persisted per conversation.
+- Added scheduled text messages:
+  - New composer action to pick a future date/time for a text message.
+  - Scheduled jobs are stored locally and dispatched automatically when due.
+  - If the app was closed, overdue scheduled messages are dispatched on the next active app session.
+- Improved calls UX:
+  - Calls list and call details now resolve participant labels from the phone contact name first.
+  - Falls back to the saved phone number when the caller is not in local contacts.
+  - Added dedicated `/call/:id` route handling and notification deep-link open flow.
+- Removed user-facing debug log export entry points from chat/settings UI so diagnostics stay developer-only.
+
+## Previous Updates (v1.0.8+9)
 
 - Added dedicated in-call screen UX for both direct and group calls:
   - Opens directly after starting call from chat.
