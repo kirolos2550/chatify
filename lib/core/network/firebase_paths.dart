@@ -15,4 +15,6 @@ abstract final class FirebasePaths {
   static const prekeys = 'prekeys';
   static const outboxAcks = 'outbox_acks';
   static const abuseReports = 'abuse_reports';
+  static const callerCandidates = 'callerCandidates';
+  static const calleeCandidates = 'calleeCandidates';
 }

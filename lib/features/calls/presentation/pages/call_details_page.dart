@@ -2,8 +2,9 @@ import 'dart:async';
 
 import 'package:chatify/app/di/injection.dart';
 import 'package:chatify/core/domain/entities/call_session.dart';
-import 'package:chatify/core/domain/repositories/call_repository.dart';
+import 'package:chatify/core/domain/enums/chat_enums.dart';
 import 'package:chatify/core/domain/repositories/contacts_repository.dart';
+import 'package:chatify/core/network/firebase_paths.dart';
 import 'package:chatify/features/calls/presentation/pages/in_call_page.dart';
 import 'package:chatify/features/calls/presentation/support/call_participant_label_resolver.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
@@ -45,25 +46,27 @@ class _CallDetailsPageState extends State<CallDetailsPage> {
 
   @override
   Widget build(BuildContext context) {
-    if (!getIt.isRegistered<CallRepository>()) {
+    if (Firebase.apps.isEmpty) {
       return const Scaffold(
         body: Center(child: Text('Call service is unavailable')),
       );
     }
-    final repository = getIt<CallRepository>();
-    return StreamBuilder<List<CallSession>>(
-      stream: repository.watchCalls(),
+    return StreamBuilder<DocumentSnapshot<Map<String, dynamic>>>(
+      stream: FirebaseFirestore.instance
+          .collection(FirebasePaths.calls)
+          .doc(widget.callId)
+          .snapshots(),
       builder: (context, snapshot) {
         if (!snapshot.hasData) {
           return const Scaffold(
             body: Center(child: CircularProgressIndicator()),
           );
         }
-        final call = _findCallById(snapshot.data!, widget.callId);
-        if (call == null) {
+        final doc = snapshot.data!;
+        if (!doc.exists) {
           return Scaffold(
             appBar: AppBar(title: const Text('Call details')),
-            body: Center(
+            body: const Center(
               child: Text(
                 'Call was not found or has already expired.',
                 textAlign: TextAlign.center,
@@ -71,33 +74,48 @@ class _CallDetailsPageState extends State<CallDetailsPage> {
             ),
           );
         }
+        final call = _sessionFromDoc(doc);
         _ensureParticipantLabelsLoaded(call);
         final labels = _participantLabels(call);
         return InCallPage(
+          callId: call.callId,
           conversationTitle: _callTitle(labels),
           participantLabels: labels,
           callType: call.type,
           initialState: call.state,
           isIncoming: _isIncomingCall(call),
-          onEndCall: () async {
-            await repository.endCall(callId: call.callId);
-          },
-          onAcceptCall: () async {
-            await repository.acceptCall(callId: call.callId);
-          },
-          onRejectCall: () async {
-            await repository.rejectCall(callId: call.callId);
-          },
         );
       },
     );
   }
 
-  CallSession? _findCallById(List<CallSession> calls, String callId) {
-    for (final call in calls) {
-      if (call.callId == callId) {
-        return call;
-      }
+  CallSession _sessionFromDoc(DocumentSnapshot<Map<String, dynamic>> doc) {
+    final data = doc.data() ?? const <String, dynamic>{};
+    return CallSession(
+      callId: doc.id,
+      participantIds: List<String>.from(
+        data['participantIds'] as List? ?? const <String>[],
+      ),
+      type: (data['type'] as String?) == CallType.video.name
+          ? CallType.video
+          : CallType.voice,
+      state: CallState.values.firstWhere(
+        (value) => value.name == (data['state'] as String?),
+        orElse: () => CallState.ringing,
+      ),
+      startedAt: _toDateTime(data['startedAt']) ?? DateTime.now().toUtc(),
+      endedAt: _toDateTime(data['endedAt']),
+      initiatorId: data['initiatorId'] as String?,
+      answeredByUserId: data['answeredBy'] as String?,
+    );
+  }
+
+  DateTime? _toDateTime(Object? value) {
+    if (value is Timestamp) {
+      return value.toDate().toUtc();
+    }
+    if (value is int) {
+      return DateTime.fromMillisecondsSinceEpoch(value, isUtc: true);
     }
     return null;
   }

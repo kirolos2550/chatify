@@ -15,13 +15,15 @@ Production-oriented Flutter messaging foundation aligned with:
 - User profile pages (name, phone, avatar, shared groups)
 - Message reactions, stars, and pinned messages
 - Privacy controls persisted in Firebase (read receipts, last seen, typing visibility)
-- In-call experience UI for direct/group calls with call controls
+- Real Android 1:1 voice/video calls using WebRTC media + Firestore signaling
 - Reaction badge overlay + reaction participants sheet (who reacted)
 - App-wide theme mode toggle (system / light / dark)
 - Per-chat theme palettes with persisted bubble and surface styling
 - Scheduled text messages with local delivery on next due app session
 - Calls list/contact resolution using saved mobile contact name or phone number
 - Incoming call notifications that reopen the exact call details screen
+- Built-in location sharing with current-position send and map pin picker
+- Emoji picker with recents, categories, search, and backspace
 
 ## Project Structure
 
@@ -161,7 +163,24 @@ Verify token must match `WHATSAPP_VERIFY_TOKEN`.
 6. Enter phone numbers in E.164 format (example: `+2010XXXXXXXX`).
 7. After successful OTP verification, the app now auto-creates/updates `users/{uid}` in Firestore.
 
-## Latest Updates (v1.0.9+10)
+## Latest Updates (v1.1.0+11)
+
+- Replaced placeholder call behavior with real Android-first WebRTC calls:
+  - Direct one-to-one voice and video calls now open microphone/camera media streams for real.
+  - In-call controls now toggle actual mute, speaker routing, camera enable/disable, and camera switch.
+  - Firestore call documents now carry WebRTC offer/answer and ICE candidate signaling data.
+- Removed misleading call entry points:
+  - Group-call style placeholders and demo call records were removed from the Calls tab.
+  - Call actions now appear only for one-to-one chats until group calling is implemented for real.
+- Added built-in location sharing flow:
+  - Send the current device location directly from chat.
+  - Pick a custom location from an in-app map instead of copying a Google Maps link manually.
+  - Location messages render as a clearer card with map/open actions.
+- Upgraded the emoji experience:
+  - Replaced the lightweight emoji sheet with a richer picker.
+  - Added recents, category tabs, search, and quick backspace behavior.
+
+## Previous Updates (v1.0.9+10)
 
 - Added app-wide appearance mode selection:
   - New Settings option for `System`, `Light`, and `Dark`.

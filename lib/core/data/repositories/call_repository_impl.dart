@@ -22,7 +22,7 @@ class CallRepositoryImpl implements CallRepository {
     try {
       final currentUserId = FirebaseAuth.instance.currentUser?.uid;
       await _firestore.collection(FirebasePaths.calls).doc(callId).set({
-        'state': CallState.connected.name,
+        'state': CallState.connecting.name,
         'answeredBy': currentUserId,
         'answeredAt': FieldValue.serverTimestamp(),
       }, SetOptions(merge: true));
@@ -42,9 +42,11 @@ class CallRepositoryImpl implements CallRepository {
   @override
   Future<Result<void>> endCall({required String callId}) async {
     try {
+      final currentUserId = FirebaseAuth.instance.currentUser?.uid;
       await _firestore.collection(FirebasePaths.calls).doc(callId).set({
         'state': CallState.ended.name,
         'endedAt': FieldValue.serverTimestamp(),
+        'endedBy': currentUserId,
       }, SetOptions(merge: true));
       return const Success(null);
     } catch (e, stackTrace) {
@@ -66,15 +68,23 @@ class CallRepositoryImpl implements CallRepository {
   }) async {
     try {
       final currentUserId = FirebaseAuth.instance.currentUser?.uid;
+      if (currentUserId == null || currentUserId.trim().isEmpty) {
+        return const FailureResult(
+          Failure('You must sign in before starting a call.'),
+        );
+      }
       final normalizedParticipants = participantIds
           .where((id) => id.trim().isNotEmpty)
           .toSet();
-      if (currentUserId != null && currentUserId.trim().isNotEmpty) {
-        normalizedParticipants.add(currentUserId);
-      }
+      normalizedParticipants.add(currentUserId);
       if (normalizedParticipants.isEmpty) {
         return const FailureResult(
           Failure('No participants were provided for this call.'),
+        );
+      }
+      if (normalizedParticipants.length != 2) {
+        return const FailureResult(
+          Failure('Only one-to-one calls are supported right now.'),
         );
       }
       final callId = _uuid.v4();
@@ -84,10 +94,14 @@ class CallRepositoryImpl implements CallRepository {
         'type': type.name,
         'state': CallState.ringing.name,
         'startedAt': now.millisecondsSinceEpoch,
-        'initiatorId': currentUserId ?? normalizedParticipants.first,
+        'initiatorId': currentUserId,
         'answeredBy': null,
         'answeredAt': null,
         'endedAt': null,
+        'endedBy': null,
+        'declinedBy': null,
+        'offer': null,
+        'answer': null,
       });
       return Success(
         CallSession(
@@ -96,7 +110,7 @@ class CallRepositoryImpl implements CallRepository {
           type: type,
           state: CallState.ringing,
           startedAt: now,
-          initiatorId: currentUserId ?? normalizedParticipants.first,
+          initiatorId: currentUserId,
         ),
       );
     } catch (e, stackTrace) {

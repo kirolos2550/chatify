@@ -17,7 +17,6 @@ import 'package:chatify/core/domain/repositories/contacts_repository.dart';
 import 'package:chatify/core/domain/repositories/conversation_repository.dart';
 import 'package:chatify/core/domain/repositories/message_repository.dart';
 import 'package:chatify/core/network/firebase_paths.dart';
-import 'package:chatify/features/calls/presentation/pages/in_call_page.dart';
 import 'package:chatify/features/chats/data/repositories/message_repository_fallback.dart';
 import 'package:chatify/features/chats/data/services/chat_preferences_service.dart';
 import 'package:chatify/features/chats/data/services/scheduled_message_service.dart';
@@ -26,10 +25,13 @@ import 'package:chatify/features/chats/domain/usecases/send_text_message_use_cas
 import 'package:chatify/features/chats/presentation/bloc/chat_thread_cubit.dart';
 import 'package:chatify/features/chats/presentation/widgets/group_creation_sheet.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:emoji_picker_flutter/emoji_picker_flutter.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_storage/firebase_storage.dart';
 import 'package:file_picker/file_picker.dart';
+import 'package:geocoding/geocoding.dart';
+import 'package:geolocator/geolocator.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
@@ -41,6 +43,8 @@ import 'package:record/record.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:uuid/uuid.dart';
+
+import 'location_picker_page.dart';
 
 const String _supabaseUrl = String.fromEnvironment(
   'SUPABASE_URL',
@@ -104,6 +108,7 @@ class _ChatPageState extends State<ChatPage> {
   bool _isGroupConversation = false;
   DateTime? _conversationCreatedAt;
   List<String> _conversationMemberIds = const <String>[];
+  bool _conversationMetadataReady = false;
   final Map<String, Future<String?>> _resolvedAttachmentUrlCache =
       <String, Future<String?>>{};
   bool _isNearMessagesBottom = true;
@@ -144,6 +149,7 @@ class _ChatPageState extends State<ChatPage> {
       _isGroupConversation = false;
       _conversationCreatedAt = null;
       _conversationMemberIds = const <String>[];
+      _conversationMetadataReady = false;
       _resolvedAttachmentUrlCache.clear();
       _isNearMessagesBottom = true;
       _lastObservedTailMessageId = null;
@@ -200,16 +206,18 @@ class _ChatPageState extends State<ChatPage> {
           appBar: AppBar(
             title: _buildChatTitle(),
             actions: [
-              IconButton(
-                tooltip: 'Voice call',
-                onPressed: () => _startCall(CallType.voice),
-                icon: const Icon(Icons.call_outlined),
-              ),
-              IconButton(
-                tooltip: 'Video call',
-                onPressed: () => _startCall(CallType.video),
-                icon: const Icon(Icons.videocam_outlined),
-              ),
+              if (_conversationMetadataReady && !_isGroupConversation) ...[
+                IconButton(
+                  tooltip: 'Voice call',
+                  onPressed: () => _startCall(CallType.voice),
+                  icon: const Icon(Icons.call_outlined),
+                ),
+                IconButton(
+                  tooltip: 'Video call',
+                  onPressed: () => _startCall(CallType.video),
+                  icon: const Icon(Icons.videocam_outlined),
+                ),
+              ],
               PopupMenuButton<_ChatMenuAction>(
                 onSelected: _onChatMenuAction,
                 itemBuilder: (context) {
@@ -278,6 +286,12 @@ class _ChatPageState extends State<ChatPage> {
                       value: _ChatMenuAction.changeTheme,
                       child: Text(
                         _tr(en: 'Change chat theme', ar: 'تغيير سمة الدردشة'),
+                      ),
+                    ),
+                    PopupMenuItem(
+                      value: _ChatMenuAction.scheduleMessage,
+                      child: Text(
+                        _tr(en: 'Schedule message', ar: 'جدولة الرسالة'),
                       ),
                     ),
                     PopupMenuItem(
@@ -550,9 +564,28 @@ class _ChatPageState extends State<ChatPage> {
                                           fillColor: _chatComposerFillColor(
                                             context,
                                           ),
+                                          prefixIcon: IconButton(
+                                            tooltip: _tr(
+                                              en: 'Emoji',
+                                              ar: 'إيموجي',
+                                            ),
+                                            visualDensity:
+                                                VisualDensity.compact,
+                                            splashRadius: 18,
+                                            onPressed: _showEmojiPicker,
+                                            icon: const Icon(
+                                              Icons.emoji_emotions_outlined,
+                                              size: 20,
+                                            ),
+                                          ),
+                                          prefixIconConstraints:
+                                              const BoxConstraints(
+                                                minWidth: 36,
+                                                minHeight: 36,
+                                              ),
                                           contentPadding:
                                               const EdgeInsets.symmetric(
-                                                horizontal: 16,
+                                                horizontal: 12,
                                                 vertical: 14,
                                               ),
                                           border: OutlineInputBorder(
@@ -584,23 +617,6 @@ class _ChatPageState extends State<ChatPage> {
                                             : null,
                                       ),
                                     ),
-                                    IconButton(
-                                      tooltip: _tr(
-                                        en: 'Schedule message',
-                                        ar: 'جدولة الرسالة',
-                                      ),
-                                      onPressed:
-                                          state.sending || !hasComposerText
-                                          ? null
-                                          : () => _scheduleMessage(
-                                              replyToMessageId:
-                                                  state.replyingTo?.id,
-                                            ),
-                                      icon: const Icon(
-                                        Icons.schedule_send_outlined,
-                                      ),
-                                    ),
-                                    const SizedBox(width: 4),
                                     IconButton.filled(
                                       onPressed:
                                           state.sending || !hasComposerText
@@ -806,6 +822,7 @@ class _ChatPageState extends State<ChatPage> {
         _isGroupConversation = isGroup;
         _conversationMemberIds = members;
         _conversationCreatedAt = createdAt;
+        _conversationMetadataReady = true;
       });
     } catch (_) {
       if (!mounted) {
@@ -815,6 +832,7 @@ class _ChatPageState extends State<ChatPage> {
         _isGroupConversation = false;
         _conversationMemberIds = const <String>[];
         _conversationCreatedAt = null;
+        _conversationMetadataReady = true;
       });
     }
   }
@@ -1091,6 +1109,89 @@ class _ChatPageState extends State<ChatPage> {
     );
   }
 
+  Future<void> _showEmojiPicker() async {
+    FocusScope.of(context).unfocus();
+    final theme = Theme.of(context);
+    final isArabic = _isArabicUi();
+    final pickerSurface = theme.colorScheme.surface;
+    final controlsSurface = theme.colorScheme.surfaceContainerHighest;
+    final primary = theme.colorScheme.primary;
+    final onSurfaceVariant = theme.colorScheme.onSurfaceVariant;
+
+    await showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      showDragHandle: true,
+      backgroundColor: pickerSurface,
+      builder: (context) {
+        return SafeArea(
+          top: false,
+          child: SizedBox(
+            height: math.min(MediaQuery.of(context).size.height * 0.58, 430),
+            child: EmojiPicker(
+              textEditingController: _messageController,
+              onEmojiSelected: (category, emoji) =>
+                  _onComposerChanged(_messageController.text),
+              onBackspacePressed: () =>
+                  _onComposerChanged(_messageController.text),
+              config: Config(
+                height: null,
+                locale: const Locale('en'),
+                viewOrderConfig: const ViewOrderConfig(
+                  top: EmojiPickerItem.categoryBar,
+                  middle: EmojiPickerItem.emojiView,
+                  bottom: EmojiPickerItem.searchBar,
+                ),
+                emojiViewConfig: EmojiViewConfig(
+                  columns: 8,
+                  emojiSizeMax: 30,
+                  backgroundColor: pickerSurface,
+                  recentsLimit: 36,
+                  replaceEmojiOnLimitExceed: true,
+                  noRecents: Text(
+                    _tr(
+                      en: 'Your recent emojis will show up here',
+                      ar: 'الإيموجيز المستخدمة مؤخرًا ستظهر هنا',
+                    ),
+                    textAlign: TextAlign.center,
+                    style: theme.textTheme.bodyMedium?.copyWith(
+                      color: onSurfaceVariant,
+                    ),
+                  ),
+                ),
+                categoryViewConfig: CategoryViewConfig(
+                  initCategory: Category.RECENT,
+                  recentTabBehavior: RecentTabBehavior.RECENT,
+                  backgroundColor: controlsSurface,
+                  indicatorColor: primary,
+                  iconColor: onSurfaceVariant,
+                  iconColorSelected: primary,
+                ),
+                bottomActionBarConfig: BottomActionBarConfig(
+                  enabled: true,
+                  showBackspaceButton: true,
+                  showSearchViewButton: true,
+                  backgroundColor: controlsSurface,
+                  buttonColor: theme.colorScheme.primaryContainer,
+                  buttonIconColor: theme.colorScheme.onPrimaryContainer,
+                ),
+                searchViewConfig: SearchViewConfig(
+                  backgroundColor: pickerSurface,
+                  buttonIconColor: onSurfaceVariant,
+                  hintText: isArabic ? 'ابحث عن إيموجي' : 'Search emoji',
+                  hintTextStyle: theme.textTheme.bodyMedium?.copyWith(
+                    color: onSurfaceVariant,
+                  ),
+                  inputTextStyle: theme.textTheme.bodyMedium,
+                ),
+              ),
+            ),
+          ),
+        );
+      },
+    );
+  }
+
   Future<DateTime?> _pickScheduledDateTime() async {
     final now = DateTime.now();
     final initialDate = now.add(const Duration(hours: 1));
@@ -1177,6 +1278,11 @@ class _ChatPageState extends State<ChatPage> {
       case _ChatMenuAction.changeTheme:
         await _changeChatTheme();
         break;
+      case _ChatMenuAction.scheduleMessage:
+        await _scheduleMessage(
+          replyToMessageId: _chatThreadCubit.state.replyingTo?.id,
+        );
+        break;
       case _ChatMenuAction.reportContact:
         await _reportContact();
         break;
@@ -1201,6 +1307,15 @@ class _ChatPageState extends State<ChatPage> {
       _showSnack('No participants found for this chat');
       return;
     }
+    final currentUserId = _resolveCurrentUserId();
+    final peerIds = participants
+        .where((participantId) => participantId != currentUserId)
+        .where((participantId) => participantId.trim().isNotEmpty)
+        .toSet();
+    if (peerIds.length != 1) {
+      _showSnack('Only one-to-one calls are available right now');
+      return;
+    }
 
     final result = await repository.startCall(
       participantIds: participants,
@@ -1215,23 +1330,7 @@ class _ChatPageState extends State<ChatPage> {
     if (!mounted) {
       return;
     }
-    final conversationTitle = _conversationTitle.trim().isEmpty
-        ? _defaultConversationTitle()
-        : _conversationTitle.trim();
-    final participantLabels = _callParticipantLabels(session.participantIds);
-    await Navigator.of(context).push(
-      MaterialPageRoute<void>(
-        builder: (_) => InCallPage(
-          conversationTitle: conversationTitle,
-          participantLabels: participantLabels,
-          callType: type,
-          initialState: session.state,
-          onEndCall: () async {
-            await repository.endCall(callId: session.callId);
-          },
-        ),
-      ),
-    );
+    context.push('/call/${Uri.encodeComponent(session.callId)}');
   }
 
   Future<List<String>> _loadConversationMembers() async {
@@ -1263,33 +1362,6 @@ class _ChatPageState extends State<ChatPage> {
     }
     final current = _resolveCurrentUserId();
     return <String>{current}.toList(growable: false);
-  }
-
-  List<String> _callParticipantLabels(List<String> participantIds) {
-    final currentUserId = _resolveCurrentUserId();
-    final labels = participantIds
-        .where((participant) => participant.trim().isNotEmpty)
-        .where((participant) => participant != currentUserId)
-        .map(_callParticipantLabel)
-        .toList(growable: false);
-    if (labels.isEmpty) {
-      return const ['You'];
-    }
-    return labels;
-  }
-
-  String _callParticipantLabel(String participantId) {
-    final value = participantId.trim();
-    if (value.isEmpty) {
-      return 'Unknown';
-    }
-    if (value.startsWith('peer-')) {
-      return 'Contact';
-    }
-    if (value.length <= 14) {
-      return value;
-    }
-    return _shortId(value);
   }
 
   Future<void> _refreshConversationTitle({String? peerUserId}) async {
@@ -1662,7 +1734,7 @@ class _ChatPageState extends State<ChatPage> {
             final item = matches[index];
             return ListTile(
               title: Text(
-                item.text,
+                _messageSearchPreview(item),
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
               ),
@@ -2208,65 +2280,286 @@ class _ChatPageState extends State<ChatPage> {
   }
 
   Future<void> _sendLocation() async {
-    final latController = TextEditingController();
-    final lngController = TextEditingController();
-    final labelController = TextEditingController();
-    try {
-      final payload = await showDialog<Map<String, String>>(
-        context: context,
-        builder: (context) => AlertDialog(
-          title: const Text('Send location'),
-          content: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              TextField(
-                controller: labelController,
-                decoration: const InputDecoration(labelText: 'Label'),
+    if (_isBlocked) {
+      _showSnack('Unblock this contact first');
+      return;
+    }
+
+    final action = await showModalBottomSheet<_LocationShareAction>(
+      context: context,
+      builder: (context) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            ListTile(
+              leading: const Icon(Icons.my_location_outlined),
+              title: Text(_tr(en: 'Current location', ar: 'موقعي الحالي')),
+              subtitle: Text(
+                _tr(en: 'Use your current position', ar: 'استخدم موقعك الحالي'),
               ),
-              TextField(
-                controller: latController,
-                keyboardType: TextInputType.number,
-                decoration: const InputDecoration(labelText: 'Latitude'),
-              ),
-              TextField(
-                controller: lngController,
-                keyboardType: TextInputType.number,
-                decoration: const InputDecoration(labelText: 'Longitude'),
-              ),
-            ],
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.of(context).pop(),
-              child: const Text('Cancel'),
+              onTap: () => Navigator.of(
+                context,
+              ).pop(_LocationShareAction.currentLocation),
             ),
-            FilledButton(
-              onPressed: () => Navigator.of(context).pop({
-                'label': labelController.text.trim(),
-                'lat': latController.text.trim(),
-                'lng': lngController.text.trim(),
-              }),
-              child: const Text('Send'),
+            ListTile(
+              leading: const Icon(Icons.map_outlined),
+              title: Text(_tr(en: 'Choose on map', ar: 'اختيار من الخريطة')),
+              subtitle: Text(
+                _tr(
+                  en: 'Pick any place, restaurant or shop',
+                  ar: 'اختر أي مكان أو مطعم أو متجر',
+                ),
+              ),
+              onTap: () =>
+                  Navigator.of(context).pop(_LocationShareAction.pickOnMap),
             ),
           ],
         ),
-      );
+      ),
+    );
+    if (!mounted || action == null) {
+      return;
+    }
 
-      if (!mounted || payload == null) {
+    LocationSelectionResult? initialSelection;
+    double? initialCenterLatitude;
+    double? initialCenterLongitude;
+
+    if (action == _LocationShareAction.currentLocation) {
+      initialSelection = await _loadCurrentLocationSelection(
+        showPermissionPrompts: true,
+      );
+      if (!mounted || initialSelection == null) {
         return;
       }
-      final sent = await _chatThreadCubit.sendTypedMessage(
-        content: jsonEncode(payload),
-        type: MessageType.system,
+      initialCenterLatitude = initialSelection.latitude;
+      initialCenterLongitude = initialSelection.longitude;
+    } else {
+      final currentPosition = await _loadCurrentPosition(
+        showPermissionPrompts: false,
       );
-      if (sent && mounted) {
-        _showSnack('Location sent');
+      if (!mounted) {
+        return;
       }
-    } finally {
-      latController.dispose();
-      lngController.dispose();
-      labelController.dispose();
+      initialCenterLatitude = currentPosition?.latitude;
+      initialCenterLongitude = currentPosition?.longitude;
     }
+
+    final pickedLocation = await Navigator.of(context)
+        .push<LocationSelectionResult>(
+          MaterialPageRoute(
+            builder: (_) => LocationPickerPage(
+              isArabic: _isArabicUi(),
+              initialCenterLatitude: initialCenterLatitude,
+              initialCenterLongitude: initialCenterLongitude,
+              initialSelection: initialSelection,
+            ),
+          ),
+        );
+    if (!mounted || pickedLocation == null) {
+      return;
+    }
+
+    final sent = await _chatThreadCubit.sendTypedMessage(
+      content: jsonEncode({
+        'label': pickedLocation.label,
+        'address': pickedLocation.address,
+        'lat': pickedLocation.latitude.toStringAsFixed(6),
+        'lng': pickedLocation.longitude.toStringAsFixed(6),
+      }),
+      type: MessageType.system,
+    );
+    if (sent && mounted) {
+      _showSnack(_tr(en: 'Location sent', ar: 'تم إرسال الموقع'));
+    }
+  }
+
+  Future<LocationSelectionResult?> _loadCurrentLocationSelection({
+    required bool showPermissionPrompts,
+  }) async {
+    final position = await _loadCurrentPosition(
+      showPermissionPrompts: showPermissionPrompts,
+    );
+    if (position == null) {
+      return null;
+    }
+    final details = await _reverseGeocodeLocation(
+      position.latitude,
+      position.longitude,
+    );
+    return LocationSelectionResult(
+      latitude: position.latitude,
+      longitude: position.longitude,
+      label: details?.label ?? _tr(en: 'Current location', ar: 'موقعي الحالي'),
+      address: details?.address,
+    );
+  }
+
+  Future<Position?> _loadCurrentPosition({
+    required bool showPermissionPrompts,
+  }) async {
+    final serviceEnabled = await Geolocator.isLocationServiceEnabled();
+    if (!serviceEnabled) {
+      if (showPermissionPrompts) {
+        await _showLocationServicesSettingsDialog();
+      }
+      return null;
+    }
+
+    var permission = await Geolocator.checkPermission();
+    if (permission == LocationPermission.denied && showPermissionPrompts) {
+      permission = await Geolocator.requestPermission();
+    }
+    if (permission == LocationPermission.denied) {
+      if (showPermissionPrompts) {
+        _showSnack(
+          _tr(
+            en: 'Location permission is required to use this option',
+            ar: 'صلاحية الموقع مطلوبة لاستخدام هذا الخيار',
+          ),
+        );
+      }
+      return null;
+    }
+    if (permission == LocationPermission.deniedForever) {
+      if (showPermissionPrompts) {
+        await _showLocationPermissionSettingsDialog();
+      }
+      return null;
+    }
+
+    try {
+      return await Geolocator.getCurrentPosition(
+        locationSettings: const LocationSettings(
+          accuracy: LocationAccuracy.high,
+        ),
+      );
+    } catch (_) {
+      if (showPermissionPrompts) {
+        _showSnack(
+          _tr(
+            en: 'Failed to read your current location',
+            ar: 'تعذر تحديد موقعك الحالي',
+          ),
+        );
+      }
+      return null;
+    }
+  }
+
+  Future<void> _showLocationServicesSettingsDialog() {
+    return showDialog<void>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text(
+          _tr(en: 'Location services are off', ar: 'خدمات الموقع متوقفة'),
+        ),
+        content: Text(
+          _tr(
+            en: 'Turn on location services to pick and share places.',
+            ar: 'فعّل خدمات الموقع لتحديد الأماكن ومشاركتها.',
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(),
+            child: Text(_tr(en: 'Cancel', ar: 'إلغاء')),
+          ),
+          FilledButton(
+            onPressed: () async {
+              Navigator.of(context).pop();
+              await Geolocator.openLocationSettings();
+            },
+            child: Text(_tr(en: 'Open settings', ar: 'فتح الإعدادات')),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _showLocationPermissionSettingsDialog() {
+    return showDialog<void>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text(
+          _tr(en: 'Location permission is blocked', ar: 'صلاحية الموقع محظورة'),
+        ),
+        content: Text(
+          _tr(
+            en: 'Allow location access from app settings to use this option.',
+            ar: 'اسمح بالوصول للموقع من إعدادات التطبيق لاستخدام هذا الخيار.',
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(),
+            child: Text(_tr(en: 'Cancel', ar: 'إلغاء')),
+          ),
+          FilledButton(
+            onPressed: () async {
+              Navigator.of(context).pop();
+              await Geolocator.openAppSettings();
+            },
+            child: Text(_tr(en: 'App settings', ar: 'إعدادات التطبيق')),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<_LocationDetails?> _reverseGeocodeLocation(
+    double latitude,
+    double longitude,
+  ) async {
+    try {
+      await setLocaleIdentifier(_isArabicUi() ? 'ar_EG' : 'en_US');
+      final placemarks = await placemarkFromCoordinates(latitude, longitude);
+      if (placemarks.isEmpty) {
+        return null;
+      }
+      final placemark = placemarks.first;
+      final label =
+          _firstNonEmptyString([
+            placemark.name,
+            placemark.street,
+            placemark.subLocality,
+            placemark.locality,
+            placemark.country,
+          ]) ??
+          _tr(en: 'Pinned location', ar: 'الموقع المحدد');
+      final addressParts = <String>[];
+      for (final part in [
+        placemark.street,
+        placemark.subLocality,
+        placemark.locality,
+        placemark.administrativeArea,
+        placemark.country,
+      ]) {
+        final normalized = part?.trim();
+        if (normalized == null ||
+            normalized.isEmpty ||
+            addressParts.contains(normalized)) {
+          continue;
+        }
+        addressParts.add(normalized);
+      }
+      return _LocationDetails(
+        label: label,
+        address: addressParts.isEmpty ? null : addressParts.join(', '),
+      );
+    } catch (_) {
+      return null;
+    }
+  }
+
+  String? _firstNonEmptyString(Iterable<String?> values) {
+    for (final value in values) {
+      final normalized = value?.trim();
+      if (normalized != null && normalized.isNotEmpty) {
+        return normalized;
+      }
+    }
+    return null;
   }
 
   Future<void> _sendContactCard() async {
@@ -3226,8 +3519,7 @@ class _ChatPageState extends State<ChatPage> {
                 ),
                 if (message.isMine &&
                     !message.isDeleted &&
-                    (message.type == MessageType.text ||
-                        message.type == MessageType.system))
+                    _canEditMessage(message))
                   ListTile(
                     leading: const Icon(Icons.edit_outlined),
                     title: Text(_tr(en: 'Edit', ar: 'تعديل')),
@@ -3256,7 +3548,9 @@ class _ChatPageState extends State<ChatPage> {
         _chatThreadCubit.startReply(message);
         break;
       case _MessageAction.copy:
-        await Clipboard.setData(ClipboardData(text: message.text));
+        await Clipboard.setData(
+          ClipboardData(text: await _messageCopyText(message)),
+        );
         if (mounted) {
           _showSnack(_tr(en: 'Message copied', ar: 'تم نسخ الرسالة'));
         }
@@ -3676,14 +3970,11 @@ class _ChatPageState extends State<ChatPage> {
       case MessageType.voice:
         return _buildVoiceNoteBody(message, payload);
       case MessageType.system:
-        final lat = payload?['lat']?.toString();
-        final lng = payload?['lng']?.toString();
+        final location = _tryParseLocationPayload(payload);
         final name = payload?['name']?.toString();
         final phone = payload?['phone']?.toString();
-        if (lat != null && lng != null) {
-          return Text(
-            _tr(en: 'Location: $lat, $lng', ar: 'الموقع: $lat, $lng'),
-          );
+        if (location != null) {
+          return _buildLocationMessageBody(location);
         }
         if (name != null && phone != null) {
           return Text(
@@ -3698,6 +3989,119 @@ class _ChatPageState extends State<ChatPage> {
       case MessageType.videoNote:
         return Text(message.text);
     }
+  }
+
+  Widget _buildLocationMessageBody(_LocationMessagePayload location) {
+    final theme = Theme.of(context);
+    final title = location.label?.trim().isNotEmpty == true
+        ? location.label!.trim()
+        : _tr(en: 'Pinned location', ar: 'الموقع المحدد');
+    final address = location.address?.trim();
+    final coordinates =
+        '${location.latitude.toStringAsFixed(5)}, '
+        '${location.longitude.toStringAsFixed(5)}';
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Icon(Icons.location_on_outlined, size: 18),
+            const SizedBox(width: 6),
+            Flexible(
+              child: Text(
+                title,
+                style: theme.textTheme.titleSmall?.copyWith(
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+            ),
+          ],
+        ),
+        if (address != null && address.isNotEmpty)
+          Padding(padding: const EdgeInsets.only(top: 6), child: Text(address)),
+        Padding(
+          padding: const EdgeInsets.only(top: 6),
+          child: Text(
+            coordinates,
+            style: theme.textTheme.bodySmall?.copyWith(
+              color: theme.colorScheme.onSurfaceVariant,
+            ),
+          ),
+        ),
+        Padding(
+          padding: const EdgeInsets.only(top: 8),
+          child: Wrap(
+            spacing: 6,
+            runSpacing: 6,
+            children: [
+              OutlinedButton.icon(
+                onPressed: () => _openLocationInMaps(location),
+                icon: const Icon(Icons.map_outlined),
+                label: Text(_tr(en: 'Open map', ar: 'فتح الخريطة')),
+              ),
+              OutlinedButton.icon(
+                onPressed: () => _copyLocationLink(location),
+                icon: const Icon(Icons.copy_outlined),
+                label: Text(_tr(en: 'Copy link', ar: 'نسخ الرابط')),
+              ),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+
+  Future<void> _openLocationInMaps(_LocationMessagePayload location) async {
+    final primaryUri = _locationPrimaryMapUri(location);
+    if (await canLaunchUrl(primaryUri)) {
+      await launchUrl(primaryUri, mode: LaunchMode.externalApplication);
+      return;
+    }
+
+    final fallbackUri = _locationUniversalMapUri(location);
+    if (await canLaunchUrl(fallbackUri)) {
+      await launchUrl(fallbackUri, mode: LaunchMode.externalApplication);
+      return;
+    }
+
+    if (mounted) {
+      _showSnack(_tr(en: 'Unable to open maps', ar: 'تعذر فتح الخريطة'));
+    }
+  }
+
+  Future<void> _copyLocationLink(_LocationMessagePayload location) async {
+    await Clipboard.setData(
+      ClipboardData(text: _locationUniversalMapUri(location).toString()),
+    );
+    if (mounted) {
+      _showSnack(_tr(en: 'Location link copied', ar: 'تم نسخ رابط الموقع'));
+    }
+  }
+
+  Uri _locationPrimaryMapUri(_LocationMessagePayload location) {
+    final label = location.label?.trim().isNotEmpty == true
+        ? location.label!.trim()
+        : _tr(en: 'Pinned location', ar: 'الموقع المحدد');
+    if (Platform.isIOS) {
+      return Uri.parse(
+        'https://maps.apple.com/?ll=${location.latitude},'
+        '${location.longitude}&q=${Uri.encodeComponent(label)}',
+      );
+    }
+    return Uri.parse(
+      'geo:${location.latitude},${location.longitude}?q='
+      '${location.latitude},${location.longitude}'
+      '(${Uri.encodeComponent(label)})',
+    );
+  }
+
+  Uri _locationUniversalMapUri(_LocationMessagePayload location) {
+    return Uri.parse(
+      'https://www.google.com/maps/search/?api=1&query='
+      '${location.latitude},${location.longitude}',
+    );
   }
 
   Widget _buildMessageReactionBadge(ChatMessageView message) {
@@ -4339,13 +4743,109 @@ class _ChatPageState extends State<ChatPage> {
     return null;
   }
 
+  _LocationMessagePayload? _tryParseLocationPayload(
+    Map<String, Object?>? payload,
+  ) {
+    if (payload == null) {
+      return null;
+    }
+    final latitude = double.tryParse(payload['lat']?.toString() ?? '');
+    final longitude = double.tryParse(payload['lng']?.toString() ?? '');
+    if (latitude == null || longitude == null) {
+      return null;
+    }
+    final label = payload['label']?.toString().trim();
+    final address = payload['address']?.toString().trim();
+    return _LocationMessagePayload(
+      latitude: latitude,
+      longitude: longitude,
+      label: label == null || label.isEmpty ? null : label,
+      address: address == null || address.isEmpty ? null : address,
+    );
+  }
+
+  bool _isStructuredSystemPayload(Map<String, Object?>? payload) {
+    if (_tryParseLocationPayload(payload) != null) {
+      return true;
+    }
+    final name = payload?['name']?.toString().trim();
+    final phone = payload?['phone']?.toString().trim();
+    return name != null && name.isNotEmpty && phone != null && phone.isNotEmpty;
+  }
+
+  bool _canEditMessage(ChatMessageView message) {
+    if (message.type == MessageType.text) {
+      return true;
+    }
+    if (message.type != MessageType.system) {
+      return false;
+    }
+    return !_isStructuredSystemPayload(_tryDecodePayload(message.text));
+  }
+
+  String _messageSearchPreview(ChatMessageView message) {
+    if (message.type != MessageType.system) {
+      return message.text;
+    }
+    final payload = _tryDecodePayload(message.text);
+    final location = _tryParseLocationPayload(payload);
+    if (location != null) {
+      return location.label?.trim().isNotEmpty == true
+          ? location.label!.trim()
+          : _tr(en: 'Location', ar: 'موقع');
+    }
+    final name = payload?['name']?.toString().trim();
+    final phone = payload?['phone']?.toString().trim();
+    if (name != null && name.isNotEmpty && phone != null && phone.isNotEmpty) {
+      return _tr(en: 'Contact: $name', ar: 'جهة الاتصال: $name');
+    }
+    return message.text;
+  }
+
+  Future<String> _messageCopyText(ChatMessageView message) async {
+    if (message.type != MessageType.system) {
+      return message.text;
+    }
+    final payload = _tryDecodePayload(message.text);
+    final location = _tryParseLocationPayload(payload);
+    if (location != null) {
+      return _locationUniversalMapUri(location).toString();
+    }
+    final name = payload?['name']?.toString().trim();
+    final phone = payload?['phone']?.toString().trim();
+    if (name != null && name.isNotEmpty && phone != null && phone.isNotEmpty) {
+      return '$name\n$phone';
+    }
+    return message.text;
+  }
+
+  String? _messageKindLabel(ChatMessageView message) {
+    if (message.type == MessageType.text) {
+      return null;
+    }
+    if (message.type == MessageType.system) {
+      final payload = _tryDecodePayload(message.text);
+      if (_tryParseLocationPayload(payload) != null) {
+        return _tr(en: 'location', ar: 'موقع');
+      }
+      final name = payload?['name']?.toString().trim();
+      final phone = payload?['phone']?.toString().trim();
+      if (name != null &&
+          name.isNotEmpty &&
+          phone != null &&
+          phone.isNotEmpty) {
+        return _tr(en: 'contact', ar: 'جهة اتصال');
+      }
+    }
+    return message.type.name;
+  }
+
   String _messageMeta(ChatMessageView message) {
     final h = message.sentAt.hour.toString().padLeft(2, '0');
     final m = message.sentAt.minute.toString().padLeft(2, '0');
     final edited = message.editedAt != null ? ' - edited' : '';
-    final kind = message.type == MessageType.text
-        ? ''
-        : ' - ${message.type.name}';
+    final kindLabel = _messageKindLabel(message);
+    final kind = kindLabel == null ? '' : ' - $kindLabel';
     final starred = message.isStarred ? ' - starred' : '';
     final pinned = message.isPinned ? ' - pinned' : '';
     return '$h:$m$kind$edited$starred$pinned';
@@ -4636,6 +5136,27 @@ class _AttachmentItem {
   final String meta;
 }
 
+class _LocationDetails {
+  const _LocationDetails({required this.label, this.address});
+
+  final String label;
+  final String? address;
+}
+
+class _LocationMessagePayload {
+  const _LocationMessagePayload({
+    required this.latitude,
+    required this.longitude,
+    this.label,
+    this.address,
+  });
+
+  final double latitude;
+  final double longitude;
+  final String? label;
+  final String? address;
+}
+
 enum _MessageAction {
   reply,
   copy,
@@ -4673,9 +5194,12 @@ enum _ChatMenuAction {
   mediaLinksDocs,
   toggleMute,
   changeTheme,
+  scheduleMessage,
   reportContact,
   toggleBlock,
   clearChat,
 }
+
+enum _LocationShareAction { currentLocation, pickOnMap }
 
 enum _AttachmentAction { image, video, file, location, contact }
