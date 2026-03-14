@@ -163,22 +163,20 @@ Verify token must match `WHATSAPP_VERIFY_TOKEN`.
 6. Enter phone numbers in E.164 format (example: `+2010XXXXXXXX`).
 7. After successful OTP verification, the app now auto-creates/updates `users/{uid}` in Firestore.
 
-## Latest Updates (v1.1.0+11)
+## Latest Updates (v1.1.1+12)
 
-- Replaced placeholder call behavior with real Android-first WebRTC calls:
-  - Direct one-to-one voice and video calls now open microphone/camera media streams for real.
-  - In-call controls now toggle actual mute, speaker routing, camera enable/disable, and camera switch.
-  - Firestore call documents now carry WebRTC offer/answer and ICE candidate signaling data.
-- Removed misleading call entry points:
-  - Group-call style placeholders and demo call records were removed from the Calls tab.
-  - Call actions now appear only for one-to-one chats until group calling is implemented for real.
-- Added built-in location sharing flow:
-  - Send the current device location directly from chat.
-  - Pick a custom location from an in-app map instead of copying a Google Maps link manually.
-  - Location messages render as a clearer card with map/open actions.
-- Upgraded the emoji experience:
-  - Replaced the lightweight emoji sheet with a richer picker.
-  - Added recents, category tabs, search, and quick backspace behavior.
+- Hardened one-to-one WebRTC call signaling:
+  - Added optional Supabase-backed ICE candidate transport for call setup.
+  - Kept Firestore offer/answer session state while allowing ICE candidate signaling to move to Supabase when enabled.
+  - Added runtime flags for Supabase call signaling and documented the required table/realtime setup.
+- Fixed Firebase call candidate permissions:
+  - Firestore rules now allow reads and writes for `callerCandidates` and `calleeCandidates` under each call document.
+  - This prevents call setup from failing when the app exchanges ICE candidates through Firestore.
+- Improved failed-call debugging UX:
+  - The in-call screen no longer auto-closes on `failed`, so the user can see the actual error state.
+  - Auto-close behavior is still kept for clean terminal states like `ended` and `missed`.
+- Preserved the broader `v1.1.0` call/chat improvements already shipped:
+  - Real Android-first WebRTC voice and video calls, richer location sharing, and the upgraded emoji picker remain part of this release line.
 
 ## Previous Updates (v1.0.9+10)
 
@@ -313,6 +311,14 @@ Verify token must match `WHATSAPP_VERIFY_TOKEN`.
 - Firebase Storage upload fallback is disabled by default in current builds.
 - Enable Firebase fallback only when intentionally needed:
   - `--dart-define=ENABLE_FIREBASE_STORAGE_UPLOAD_FALLBACK=true`
+
+### Supabase setup required for call signaling (optional)
+
+- Create table `call_ice_candidates` with columns: `id` uuid primary key default `gen_random_uuid()`, `call_id` text not null, `role` text not null, `author_id` text, `candidate` text not null, `sdp_mid` text, `sdp_mline_index` int, `created_at` timestamptz default `now()`.
+- Enable Realtime replication for `call_ice_candidates`.
+- Add RLS policies to allow `SELECT` and `INSERT` for your client role (e.g. `anon` in debug/dev).
+- Enable in app with `--dart-define=USE_SUPABASE_CALL_SIGNALING=true`.
+- Optional overrides: `--dart-define=SUPABASE_CALL_CANDIDATES_TABLE=call_ice_candidates`, `--dart-define=SUPABASE_CALL_SCHEMA=public`.
 
 ## Crashlytics
 

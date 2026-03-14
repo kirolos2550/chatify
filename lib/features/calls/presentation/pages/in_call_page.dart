@@ -7,6 +7,28 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_webrtc/flutter_webrtc.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
+
+const bool _enableSupabaseCallSignaling = bool.fromEnvironment(
+  'USE_SUPABASE_CALL_SIGNALING',
+  defaultValue: false,
+);
+const String _supabaseUrl = String.fromEnvironment(
+  'SUPABASE_URL',
+  defaultValue: 'https://uhovvyhmfqogjrayqigl.supabase.co',
+);
+const String _supabaseAnonKey = String.fromEnvironment(
+  'SUPABASE_ANON_KEY',
+  defaultValue: 'sb_publishable_qW4G6ek9jzbPtw1Fe3e8TQ_9IhYLBwy',
+);
+const String _supabaseCallCandidatesTable = String.fromEnvironment(
+  'SUPABASE_CALL_CANDIDATES_TABLE',
+  defaultValue: 'call_ice_candidates',
+);
+const String _supabaseCallSchema = String.fromEnvironment(
+  'SUPABASE_CALL_SCHEMA',
+  defaultValue: 'public',
+);
 
 class InCallPage extends StatefulWidget {
   const InCallPage({
@@ -208,8 +230,10 @@ class _InCallPageState extends State<InCallPage> {
     if (currentUserId == null || currentUserId.trim().isEmpty) {
       return;
     }
+    final candidateTransport = _resolveCandidateTransport(currentUserId);
     final controller = WebRtcCallController(
       firestore: FirebaseFirestore.instance,
+      candidateTransport: candidateTransport,
       callId: widget.callId,
       callType: widget.callType,
       currentUserId: currentUserId,
@@ -219,6 +243,41 @@ class _InCallPageState extends State<InCallPage> {
     controller.addListener(_handleControllerChange);
     _controller = controller;
     unawaited(controller.initialize());
+  }
+
+  CallCandidateTransport _resolveCandidateTransport(String currentUserId) {
+    if (_useSupabaseCallSignaling) {
+      final client = _supabaseClientOrNull();
+      if (client != null) {
+        return SupabaseCandidateTransport(
+          client: client,
+          callId: widget.callId,
+          isIncoming: widget.isIncoming,
+          currentUserId: currentUserId,
+          tableName: _supabaseCallCandidatesTable,
+          schema: _supabaseCallSchema,
+        );
+      }
+    }
+    return FirestoreCandidateTransport(
+      firestore: FirebaseFirestore.instance,
+      callId: widget.callId,
+      isIncoming: widget.isIncoming,
+      currentUserId: currentUserId,
+    );
+  }
+
+  bool get _useSupabaseCallSignaling =>
+      _enableSupabaseCallSignaling &&
+      _supabaseUrl.trim().isNotEmpty &&
+      _supabaseAnonKey.trim().isNotEmpty;
+
+  SupabaseClient? _supabaseClientOrNull() {
+    try {
+      return Supabase.instance.client;
+    } catch (_) {
+      return null;
+    }
   }
 
   void _disposeController() {
@@ -251,6 +310,10 @@ class _InCallPageState extends State<InCallPage> {
       _autoCloseTimer?.cancel();
       return;
     }
+    if (!_shouldAutoClose(controller.callState)) {
+      _autoCloseTimer?.cancel();
+      return;
+    }
     _autoCloseTimer ??= Timer(const Duration(milliseconds: 900), () {
       if (!mounted) {
         return;
@@ -260,6 +323,10 @@ class _InCallPageState extends State<InCallPage> {
         navigator.pop();
       }
     });
+  }
+
+  bool _shouldAutoClose(CallState state) {
+    return state == CallState.ended || state == CallState.missed;
   }
 
   Future<void> _handleClosePressed() async {

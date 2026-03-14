@@ -7,20 +7,24 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_webrtc/flutter_webrtc.dart';
 import 'package:permission_handler/permission_handler.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
 
 class WebRtcCallController extends ChangeNotifier {
   WebRtcCallController({
     required FirebaseFirestore firestore,
+    required CallCandidateTransport candidateTransport,
     required this.callId,
     required this.callType,
     required this.currentUserId,
     required this.isIncoming,
     required CallState initialState,
   }) : _firestore = firestore,
+       _candidateTransport = candidateTransport,
        _callState = initialState,
        _videoEnabled = callType == CallType.video;
 
   final FirebaseFirestore _firestore;
+  final CallCandidateTransport _candidateTransport;
   final String callId;
   final CallType callType;
   final String currentUserId;
@@ -49,9 +53,8 @@ class WebRtcCallController extends ChangeNotifier {
   MediaStream? _remoteStream;
   RTCPeerConnection? _peerConnection;
   StreamSubscription<DocumentSnapshot<Map<String, dynamic>>>? _callSubscription;
-  StreamSubscription<QuerySnapshot<Map<String, dynamic>>>?
-  _remoteCandidatesSubscription;
-  final Set<String> _handledRemoteCandidateIds = <String>{};
+  StreamSubscription<RemoteIceCandidate>? _remoteCandidatesSubscription;
+  final Set<String> _handledRemoteCandidateKeys = <String>{};
   final List<RTCIceCandidate> _pendingRemoteCandidates = <RTCIceCandidate>[];
 
   CallState get callState => _callState;
@@ -70,20 +73,6 @@ class WebRtcCallController extends ChangeNotifier {
 
   DocumentReference<Map<String, dynamic>> get _callDoc =>
       _firestore.collection(FirebasePaths.calls).doc(callId);
-
-  CollectionReference<Map<String, dynamic>> get _localCandidates =>
-      _callDoc.collection(
-        isIncoming
-            ? FirebasePaths.calleeCandidates
-            : FirebasePaths.callerCandidates,
-      );
-
-  CollectionReference<Map<String, dynamic>> get _remoteCandidates =>
-      _callDoc.collection(
-        isIncoming
-            ? FirebasePaths.callerCandidates
-            : FirebasePaths.calleeCandidates,
-      );
 
   MediaStreamTrack? get _audioTrack {
     final tracks = _localStream?.getAudioTracks();
@@ -280,6 +269,7 @@ class WebRtcCallController extends ChangeNotifier {
   Future<void> _disposeAsync() async {
     await _callSubscription?.cancel();
     await _remoteCandidatesSubscription?.cancel();
+    await _candidateTransport.dispose();
     try {
       final tracks = _localStream?.getTracks() ?? const <MediaStreamTrack>[];
       for (final track in tracks) {
@@ -506,23 +496,19 @@ class WebRtcCallController extends ChangeNotifier {
     if (_remoteCandidatesSubscription != null) {
       return;
     }
-    _remoteCandidatesSubscription = _remoteCandidates.snapshots().listen(
-      (snapshot) {
-        for (final doc in snapshot.docs) {
-          if (!_handledRemoteCandidateIds.add(doc.id)) {
-            continue;
-          }
-          final candidate = _iceCandidateFromData(doc.data());
-          if (candidate == null) {
-            continue;
-          }
-          if (_canApplyRemoteCandidates) {
-            unawaited(_peerConnection?.addCandidate(candidate));
-          } else {
-            _pendingRemoteCandidates.add(candidate);
-          }
-        }
-      },
+    _remoteCandidatesSubscription = _candidateTransport
+        .watchRemoteCandidates()
+        .listen(
+          (event) {
+            if (!_handledRemoteCandidateKeys.add(event.key)) {
+              return;
+            }
+            if (_canApplyRemoteCandidates) {
+              unawaited(_peerConnection?.addCandidate(event.candidate));
+            } else {
+              _pendingRemoteCandidates.add(event.candidate);
+            }
+          },
       onError: (Object error, StackTrace stackTrace) {
         _errorMessage = 'Network signaling failed.';
         AppLogger.error(
@@ -614,18 +600,8 @@ class WebRtcCallController extends ChangeNotifier {
   }
 
   Future<void> _storeLocalCandidate(RTCIceCandidate candidate) async {
-    final value = candidate.candidate?.trim();
-    if (value == null || value.isEmpty) {
-      return;
-    }
     try {
-      await _localCandidates.add(<String, Object?>{
-        'candidate': value,
-        'sdpMid': candidate.sdpMid,
-        'sdpMLineIndex': candidate.sdpMLineIndex,
-        'createdAt': FieldValue.serverTimestamp(),
-        'authorId': currentUserId,
-      });
+      await _candidateTransport.sendLocalCandidate(candidate);
     } catch (error, stackTrace) {
       AppLogger.error(
         'Failed to store local ICE candidate',
@@ -733,19 +709,6 @@ class WebRtcCallController extends ChangeNotifier {
     return <String, String?>{'sdp': value.sdp, 'type': value.type};
   }
 
-  RTCIceCandidate? _iceCandidateFromData(Map<String, dynamic> data) {
-    final candidate = data['candidate']?.toString();
-    if (candidate == null || candidate.trim().isEmpty) {
-      return null;
-    }
-    final sdpMid = data['sdpMid']?.toString();
-    final rawIndex = data['sdpMLineIndex'];
-    final sdpMLineIndex = rawIndex is int
-        ? rawIndex
-        : int.tryParse('$rawIndex');
-    return RTCIceCandidate(candidate, sdpMid, sdpMLineIndex);
-  }
-
   Map<String, dynamic> _sdpConstraints() {
     return <String, dynamic>{
       'mandatory': <String, bool>{
@@ -761,4 +724,221 @@ class _CallSetupException implements Exception {
   const _CallSetupException(this.message);
 
   final String message;
+}
+
+RTCIceCandidate? _iceCandidateFromMap(Map<String, dynamic> data) {
+  final candidate = data['candidate']?.toString();
+  if (candidate == null || candidate.trim().isEmpty) {
+    return null;
+  }
+  final sdpMid = data['sdpMid']?.toString() ?? data['sdp_mid']?.toString();
+  final rawIndex = data['sdpMLineIndex'] ?? data['sdp_mline_index'];
+  final sdpMLineIndex = rawIndex is int ? rawIndex : int.tryParse('$rawIndex');
+  return RTCIceCandidate(candidate, sdpMid, sdpMLineIndex);
+}
+
+String _candidateKey(RTCIceCandidate candidate) {
+  final mid = candidate.sdpMid ?? '';
+  final lineIndex = candidate.sdpMLineIndex?.toString() ?? '';
+  final value = candidate.candidate ?? '';
+  return '$mid|$lineIndex|$value';
+}
+
+class RemoteIceCandidate {
+  const RemoteIceCandidate(this.candidate, {required this.key});
+
+  final RTCIceCandidate candidate;
+  final String key;
+}
+
+abstract class CallCandidateTransport {
+  Stream<RemoteIceCandidate> watchRemoteCandidates();
+
+  Future<void> sendLocalCandidate(RTCIceCandidate candidate);
+
+  Future<void> dispose();
+}
+
+class FirestoreCandidateTransport implements CallCandidateTransport {
+  FirestoreCandidateTransport({
+    required FirebaseFirestore firestore,
+    required String callId,
+    required bool isIncoming,
+    required String currentUserId,
+  }) : _firestore = firestore,
+       _callId = callId,
+       _isIncoming = isIncoming,
+       _currentUserId = currentUserId;
+
+  final FirebaseFirestore _firestore;
+  final String _callId;
+  final bool _isIncoming;
+  final String _currentUserId;
+
+  DocumentReference<Map<String, dynamic>> get _callDoc =>
+      _firestore.collection(FirebasePaths.calls).doc(_callId);
+
+  CollectionReference<Map<String, dynamic>> get _localCandidates =>
+      _callDoc.collection(
+        _isIncoming
+            ? FirebasePaths.calleeCandidates
+            : FirebasePaths.callerCandidates,
+      );
+
+  CollectionReference<Map<String, dynamic>> get _remoteCandidates =>
+      _callDoc.collection(
+        _isIncoming
+            ? FirebasePaths.callerCandidates
+            : FirebasePaths.calleeCandidates,
+      );
+
+  @override
+  Stream<RemoteIceCandidate> watchRemoteCandidates() {
+    return _remoteCandidates.snapshots().expand((snapshot) {
+      return snapshot.docs.map((doc) {
+        final candidate = _iceCandidateFromMap(doc.data());
+        if (candidate == null) {
+          return null;
+        }
+        return RemoteIceCandidate(candidate, key: doc.id);
+      }).whereType<RemoteIceCandidate>();
+    });
+  }
+
+  @override
+  Future<void> sendLocalCandidate(RTCIceCandidate candidate) async {
+    final value = candidate.candidate?.trim();
+    if (value == null || value.isEmpty) {
+      return;
+    }
+    await _localCandidates.add(<String, Object?>{
+      'candidate': value,
+      'sdpMid': candidate.sdpMid,
+      'sdpMLineIndex': candidate.sdpMLineIndex,
+      'createdAt': FieldValue.serverTimestamp(),
+      'authorId': _currentUserId,
+    });
+  }
+
+  @override
+  Future<void> dispose() async {}
+}
+
+class SupabaseCandidateTransport implements CallCandidateTransport {
+  SupabaseCandidateTransport({
+    required SupabaseClient client,
+    required String callId,
+    required bool isIncoming,
+    required String currentUserId,
+    String tableName = 'call_ice_candidates',
+    String schema = 'public',
+  }) : _client = client,
+       _callId = callId,
+       _currentUserId = currentUserId,
+       _localRole = isIncoming ? 'callee' : 'caller',
+       _tableName = tableName,
+       _schema = schema;
+
+  final SupabaseClient _client;
+  final String _callId;
+  final String _currentUserId;
+  final String _localRole;
+  final String _tableName;
+  final String _schema;
+  final StreamController<RemoteIceCandidate> _controller =
+      StreamController<RemoteIceCandidate>.broadcast();
+  RealtimeChannel? _channel;
+  bool _subscribed = false;
+  bool _disposed = false;
+
+  @override
+  Stream<RemoteIceCandidate> watchRemoteCandidates() {
+    _ensureSubscribed();
+    return _controller.stream;
+  }
+
+  @override
+  Future<void> sendLocalCandidate(RTCIceCandidate candidate) async {
+    final value = candidate.candidate?.trim();
+    if (value == null || value.isEmpty) {
+      return;
+    }
+    await _client.from(_tableName).insert(<String, Object?>{
+      'call_id': _callId,
+      'role': _localRole,
+      'author_id': _currentUserId,
+      'candidate': value,
+      'sdp_mid': candidate.sdpMid,
+      'sdp_mline_index': candidate.sdpMLineIndex,
+      'created_at': DateTime.now().toUtc().toIso8601String(),
+    });
+  }
+
+  @override
+  Future<void> dispose() async {
+    _disposed = true;
+    final channel = _channel;
+    if (channel != null) {
+      await _client.removeChannel(channel);
+      _channel = null;
+    }
+    await _controller.close();
+  }
+
+  void _ensureSubscribed() {
+    if (_subscribed || _disposed) {
+      return;
+    }
+    _subscribed = true;
+    _channel = _client.channel('call-ice:$_callId');
+    _channel!
+        .onPostgresChanges(
+          event: PostgresChangeEvent.insert,
+          schema: _schema,
+          table: _tableName,
+          filter: PostgresChangeFilter(
+            type: PostgresChangeFilterType.eq,
+            column: 'call_id',
+            value: _callId,
+          ),
+          callback: (payload) {
+            _handleRow(payload.newRecord);
+          },
+        )
+        .subscribe();
+    unawaited(_fetchExisting());
+  }
+
+  Future<void> _fetchExisting() async {
+    try {
+      final rows = List<Map<String, dynamic>>.from(
+        await _client.from(_tableName).select().eq('call_id', _callId),
+      );
+      for (final row in rows) {
+        _handleRow(row);
+      }
+    } catch (error, stackTrace) {
+      _controller.addError(error, stackTrace);
+    }
+  }
+
+  void _handleRow(Map<String, dynamic> row) {
+    if (_disposed) {
+      return;
+    }
+    final role = row['role']?.toString();
+    if (role == _localRole) {
+      return;
+    }
+    final authorId = row['author_id']?.toString();
+    if (authorId != null && authorId == _currentUserId) {
+      return;
+    }
+    final candidate = _iceCandidateFromMap(row);
+    if (candidate == null) {
+      return;
+    }
+    final key = row['id']?.toString() ?? _candidateKey(candidate);
+    _controller.add(RemoteIceCandidate(candidate, key: key));
+  }
 }

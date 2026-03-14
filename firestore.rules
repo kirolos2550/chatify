@@ -52,6 +52,14 @@ service cloud.firestore {
 
     match /calls/{callId} {
       allow read, write: if isSignedIn();
+
+      match /callerCandidates/{candidateId} {
+        allow read, write: if isSignedIn();
+      }
+
+      match /calleeCandidates/{candidateId} {
+        allow read, write: if isSignedIn();
+      }
     }
 
     match /presence/{uid} {
