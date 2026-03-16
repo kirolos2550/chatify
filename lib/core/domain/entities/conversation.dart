@@ -9,8 +9,11 @@ class Conversation extends Equatable {
     this.unreadCount = 0,
     this.isArchived = false,
     this.isPinned = false,
+    this.isFavorite = false,
+    this.lists = const [],
     this.title,
     this.avatarUrl,
+    this.searchPhone,
     this.lastMessageId,
     this.updatedAt,
   });
@@ -19,12 +22,15 @@ class Conversation extends Equatable {
   final ConversationType type;
   final String? title;
   final String? avatarUrl;
+  final String? searchPhone;
   final DateTime createdAt;
   final DateTime? updatedAt;
   final String? lastMessageId;
   final int unreadCount;
   final bool isArchived;
   final bool isPinned;
+  final bool isFavorite;
+  final List<String> lists;
 
   @override
   List<Object?> get props => [
@@ -32,11 +38,14 @@ class Conversation extends Equatable {
     type,
     title,
     avatarUrl,
+    searchPhone,
     createdAt,
     updatedAt,
     lastMessageId,
     unreadCount,
     isArchived,
     isPinned,
+    isFavorite,
+    lists,
   ];
 }

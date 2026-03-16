@@ -7,6 +7,7 @@ import 'package:chatify/core/domain/repositories/conversation_repository.dart';
 import 'package:chatify/core/network/firebase_paths.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:firebase_core/firebase_core.dart';
 import 'package:injectable/injectable.dart';
 import 'package:rxdart/rxdart.dart';
 import 'package:uuid/uuid.dart';
@@ -37,6 +38,24 @@ class ConversationRepositoryImpl implements ConversationRepository {
             conversations.sort(_compareByActivityDesc);
             return conversations;
           });
+    });
+  }
+
+  @override
+  Stream<List<String>> watchConversationLists() {
+    return _auth.authStateChanges().switchMap((user) {
+      final uid = user?.uid;
+      if (uid == null) {
+        return Stream.value(const <String>[]);
+      }
+      return _listsDoc(uid).snapshots().map((snapshot) {
+        final data = snapshot.data() ?? const <String, dynamic>{};
+        final rawItems = data['items'];
+        if (rawItems is! List) {
+          return const <String>[];
+        }
+        return _normalizeLists(rawItems.whereType<String>());
+      });
     });
   }
 
@@ -95,6 +114,39 @@ class ConversationRepositoryImpl implements ConversationRepository {
       return Success(id);
     } catch (e) {
       return FailureResult(Failure(e.toString()));
+    }
+  }
+
+  @override
+  Future<Result<String>> createConversationList({required String name}) async {
+    final uid = _auth.currentUser?.uid;
+    if (uid == null) {
+      return const FailureResult(Failure('No active user'));
+    }
+
+    final normalizedName = _normalizeSingleList(name);
+    if (normalizedName == null) {
+      return const FailureResult(Failure('List name is required'));
+    }
+
+    try {
+      await _listsDoc(uid).set({
+        'items': FieldValue.arrayUnion([normalizedName]),
+        'updatedAt': DateTime.now().millisecondsSinceEpoch,
+      }, SetOptions(merge: true));
+      return Success(normalizedName);
+    } catch (e, stackTrace) {
+      return FailureResult(
+        _failureFromFirestore(
+          e,
+          stackTrace: stackTrace,
+          operation: 'createConversationList',
+          metadata: <String, Object?>{
+            'userId': uid,
+            'listName': normalizedName,
+          },
+        ),
+      );
     }
   }
 
@@ -304,6 +356,73 @@ class ConversationRepositoryImpl implements ConversationRepository {
     }
   }
 
+  @override
+  Future<Result<void>> setConversationFavorite({
+    required String conversationId,
+    required bool favorite,
+  }) async {
+    final uid = _auth.currentUser?.uid;
+    if (uid == null) {
+      return const FailureResult(Failure('No active user'));
+    }
+
+    try {
+      await _firestore
+          .collection(FirebasePaths.conversations)
+          .doc(conversationId)
+          .set({
+            'favoriteByUserIds': favorite
+                ? FieldValue.arrayUnion([uid])
+                : FieldValue.arrayRemove([uid]),
+          }, SetOptions(merge: true));
+      return const Success(null);
+    } catch (e) {
+      return FailureResult(Failure(e.toString()));
+    }
+  }
+
+  @override
+  Future<Result<void>> setConversationLists({
+    required String conversationId,
+    required List<String> lists,
+  }) async {
+    final uid = _auth.currentUser?.uid;
+    if (uid == null) {
+      return const FailureResult(Failure('No active user'));
+    }
+
+    try {
+      final normalizedLists = _normalizeLists(lists);
+      await _firestore
+          .collection(FirebasePaths.conversations)
+          .doc(conversationId)
+          .set({
+            'listsByUserIds.$uid': normalizedLists.isEmpty
+                ? FieldValue.delete()
+                : normalizedLists,
+          }, SetOptions(merge: true));
+      if (normalizedLists.isNotEmpty) {
+        await _listsDoc(uid).set({
+          'items': FieldValue.arrayUnion(normalizedLists),
+          'updatedAt': DateTime.now().millisecondsSinceEpoch,
+        }, SetOptions(merge: true));
+      }
+      return const Success(null);
+    } catch (e, stackTrace) {
+      return FailureResult(
+        _failureFromFirestore(
+          e,
+          stackTrace: stackTrace,
+          operation: 'setConversationLists',
+          metadata: <String, Object?>{
+            'conversationId': conversationId,
+            'userId': uid,
+          },
+        ),
+      );
+    }
+  }
+
   Future<Conversation> _fromDoc(
     DocumentSnapshot<Map<String, dynamic>> doc, {
     required String currentUserId,
@@ -314,14 +433,20 @@ class ConversationRepositoryImpl implements ConversationRepository {
         : ConversationType.direct;
     final archivedByUsers = _asStringSet(data['archivedByUserIds']);
     final pinnedByUsers = _asStringSet(data['pinnedByUserIds']);
+    final favoriteByUsers = _asStringSet(data['favoriteByUserIds']);
     final memberIds = _asStringSet(data['memberIds']);
     var resolvedTitle = (data['title'] as String?)?.trim();
     var resolvedAvatarUrl = (data['avatarUrl'] as String?)?.trim();
+    String? resolvedSearchPhone;
     final unreadCount = await _resolveUnreadCount(
       conversationId: doc.id,
       data: data,
       currentUserId: currentUserId,
     );
+    final resolvedLists = _listsForUser(data['listsByUserIds'], currentUserId);
+    final lists = resolvedLists.isNotEmpty
+        ? resolvedLists
+        : _listsForUser(data['labelsByUserIds'], currentUserId);
 
     if (type == ConversationType.direct) {
       final peerUserId = _resolvePeerUserIdFromMembers(
@@ -340,6 +465,9 @@ class ConversationRepositoryImpl implements ConversationRepository {
             peerProfile!.avatarUrl!.isNotEmpty) {
           resolvedAvatarUrl = peerProfile.avatarUrl;
         }
+        if (peerProfile?.phone != null && peerProfile!.phone!.isNotEmpty) {
+          resolvedSearchPhone = peerProfile.phone;
+        }
       }
     }
 
@@ -348,12 +476,15 @@ class ConversationRepositoryImpl implements ConversationRepository {
       type: type,
       title: resolvedTitle?.isEmpty ?? true ? null : resolvedTitle,
       avatarUrl: resolvedAvatarUrl?.isEmpty ?? true ? null : resolvedAvatarUrl,
+      searchPhone: resolvedSearchPhone,
       createdAt: _fromMillis(data['createdAt']),
       updatedAt: _fromMillis(data['updatedAt']),
       lastMessageId: data['lastMessageId'] as String?,
       unreadCount: unreadCount,
       isArchived: archivedByUsers.contains(currentUserId),
       isPinned: pinnedByUsers.contains(currentUserId),
+      isFavorite: favoriteByUsers.contains(currentUserId),
+      lists: lists,
     );
   }
 
@@ -516,6 +647,65 @@ class ConversationRepositoryImpl implements ConversationRepository {
     return map;
   }
 
+  List<String> _listsForUser(Object? value, String currentUserId) {
+    if (value is! Map) {
+      return const <String>[];
+    }
+    final rawLists = value[currentUserId];
+    if (rawLists is! List) {
+      return const <String>[];
+    }
+    return _normalizeLists(rawLists.whereType<String>());
+  }
+
+  List<String> _normalizeLists(Iterable<String> lists) {
+    final deduped = <String, String>{};
+    for (final rawList in lists) {
+      final trimmed = rawList.trim();
+      if (trimmed.isEmpty) {
+        continue;
+      }
+      deduped.putIfAbsent(trimmed.toLowerCase(), () => trimmed);
+    }
+    return deduped.values.toList(growable: false);
+  }
+
+  String? _normalizeSingleList(String value) {
+    final normalized = _normalizeLists([value]);
+    if (normalized.isEmpty) {
+      return null;
+    }
+    return normalized.first;
+  }
+
+  Failure _failureFromFirestore(
+    Object error, {
+    required String operation,
+    StackTrace? stackTrace,
+    Map<String, Object?>? metadata,
+  }) {
+    if (error is FirebaseException && error.code == 'permission-denied') {
+      return Failure(
+        'Missing Firestore permission for lists. '
+        'Deploy firestore.rules or allow /users/{uid}/settings/lists.',
+        code: error.code,
+        source: 'ConversationRepositoryImpl',
+        operation: operation,
+        cause: error,
+        stackTrace: stackTrace,
+        metadata: metadata,
+      );
+    }
+
+    return Failure.fromException(
+      error,
+      stackTrace: stackTrace,
+      source: 'ConversationRepositoryImpl',
+      operation: operation,
+      metadata: metadata,
+    );
+  }
+
   Future<int> _resolveUnreadCount({
     required String conversationId,
     required Map<String, dynamic> data,
@@ -639,6 +829,7 @@ class ConversationRepositoryImpl implements ConversationRepository {
         displayName: (displayName != null && displayName.isNotEmpty)
             ? displayName
             : phone,
+        phone: phone,
         avatarUrl: avatarUrl,
       );
     } catch (_) {
@@ -666,11 +857,20 @@ class ConversationRepositoryImpl implements ConversationRepository {
       }
     }
   }
+
+  DocumentReference<Map<String, dynamic>> _listsDoc(String uid) {
+    return _firestore
+        .collection(FirebasePaths.users)
+        .doc(uid)
+        .collection(FirebasePaths.settings)
+        .doc(FirebasePaths.lists);
+  }
 }
 
 class _UserProfileSummary {
-  const _UserProfileSummary({this.displayName, this.avatarUrl});
+  const _UserProfileSummary({this.displayName, this.phone, this.avatarUrl});
 
   final String? displayName;
+  final String? phone;
   final String? avatarUrl;
 }

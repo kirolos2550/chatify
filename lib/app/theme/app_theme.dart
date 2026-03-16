@@ -22,7 +22,40 @@ abstract final class AppTheme {
       appBarTheme: const AppBarTheme(
         centerTitle: false,
         elevation: 0,
+        surfaceTintColor: Colors.transparent,
         backgroundColor: Colors.white,
+      ),
+      bottomSheetTheme: BottomSheetThemeData(
+        backgroundColor: Colors.white,
+        surfaceTintColor: Colors.transparent,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(28)),
+      ),
+      cardTheme: CardThemeData(
+        color: Colors.white,
+        surfaceTintColor: Colors.transparent,
+        elevation: 0,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
+      ),
+      chipTheme: ChipThemeData(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(999)),
+        side: BorderSide.none,
+        backgroundColor: primary.withAlpha(20),
+        selectedColor: primary,
+        labelStyle: const TextStyle(fontWeight: FontWeight.w600),
+        secondaryLabelStyle: const TextStyle(
+          color: Colors.white,
+          fontWeight: FontWeight.w700,
+        ),
+      ),
+      floatingActionButtonTheme: const FloatingActionButtonThemeData(
+        backgroundColor: primary,
+        foregroundColor: Colors.white,
+      ),
+      snackBarTheme: SnackBarThemeData(
+        behavior: SnackBarBehavior.floating,
+        backgroundColor: const Color(0xFF203347),
+        contentTextStyle: const TextStyle(color: Colors.white),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
       ),
       inputDecorationTheme: InputDecorationTheme(
         filled: true,
@@ -58,9 +91,36 @@ abstract final class AppTheme {
       appBarTheme: const AppBarTheme(
         centerTitle: false,
         elevation: 0,
+        surfaceTintColor: Colors.transparent,
         backgroundColor: surface,
       ),
+      bottomSheetTheme: BottomSheetThemeData(
+        backgroundColor: surface,
+        surfaceTintColor: Colors.transparent,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(28)),
+      ),
       cardTheme: const CardThemeData(color: surface),
+      chipTheme: ChipThemeData(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(999)),
+        side: BorderSide.none,
+        backgroundColor: Colors.white.withAlpha(14),
+        selectedColor: const Color(0xFF2395FF),
+        labelStyle: const TextStyle(fontWeight: FontWeight.w600),
+        secondaryLabelStyle: const TextStyle(
+          color: Colors.white,
+          fontWeight: FontWeight.w700,
+        ),
+      ),
+      floatingActionButtonTheme: const FloatingActionButtonThemeData(
+        backgroundColor: Color(0xFF2395FF),
+        foregroundColor: Colors.white,
+      ),
+      snackBarTheme: SnackBarThemeData(
+        behavior: SnackBarBehavior.floating,
+        backgroundColor: const Color(0xFF16273A),
+        contentTextStyle: const TextStyle(color: Colors.white),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
+      ),
       dividerColor: Colors.white12,
       inputDecorationTheme: InputDecorationTheme(
         filled: true,

@@ -3,8 +3,10 @@ import 'package:chatify/core/domain/entities/conversation.dart';
 
 abstract interface class ConversationRepository {
   Stream<List<Conversation>> watchConversations();
+  Stream<List<String>> watchConversationLists();
 
   Future<Result<String>> createDirectConversation({required String peerUserId});
+  Future<Result<String>> createConversationList({required String name});
 
   Future<Result<String>> createGroup({
     required String title,
@@ -25,5 +27,15 @@ abstract interface class ConversationRepository {
   Future<Result<void>> setConversationPinned({
     required String conversationId,
     required bool pinned,
+  });
+
+  Future<Result<void>> setConversationFavorite({
+    required String conversationId,
+    required bool favorite,
+  });
+
+  Future<Result<void>> setConversationLists({
+    required String conversationId,
+    required List<String> lists,
   });
 }

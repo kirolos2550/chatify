@@ -44,6 +44,50 @@ class Message extends Equatable {
   final String? replyToMessageId;
   final String e2eeVersion;
 
+  Message copyWith({
+    String? id,
+    String? conversationId,
+    String? senderId,
+    MessageType? type,
+    String? ciphertext,
+    DateTime? clientTimestamp,
+    int? serverSeq,
+    DateTime? editedAt,
+    DateTime? deletedForAllAt,
+    List<String>? deletedForUserIds,
+    List<String>? deliveredToUserIds,
+    List<String>? readByUserIds,
+    List<String>? starredByUserIds,
+    List<String>? pinnedByUserIds,
+    Map<String, String>? reactionsByUser,
+    LocalMessageStatus? localStatus,
+    String? deviceId,
+    String? replyToMessageId,
+    String? e2eeVersion,
+  }) {
+    return Message(
+      id: id ?? this.id,
+      conversationId: conversationId ?? this.conversationId,
+      senderId: senderId ?? this.senderId,
+      type: type ?? this.type,
+      ciphertext: ciphertext ?? this.ciphertext,
+      clientTimestamp: clientTimestamp ?? this.clientTimestamp,
+      localStatus: localStatus ?? this.localStatus,
+      deviceId: deviceId ?? this.deviceId,
+      serverSeq: serverSeq ?? this.serverSeq,
+      editedAt: editedAt ?? this.editedAt,
+      deletedForAllAt: deletedForAllAt ?? this.deletedForAllAt,
+      deletedForUserIds: deletedForUserIds ?? this.deletedForUserIds,
+      deliveredToUserIds: deliveredToUserIds ?? this.deliveredToUserIds,
+      readByUserIds: readByUserIds ?? this.readByUserIds,
+      starredByUserIds: starredByUserIds ?? this.starredByUserIds,
+      pinnedByUserIds: pinnedByUserIds ?? this.pinnedByUserIds,
+      reactionsByUser: reactionsByUser ?? this.reactionsByUser,
+      replyToMessageId: replyToMessageId ?? this.replyToMessageId,
+      e2eeVersion: e2eeVersion ?? this.e2eeVersion,
+    );
+  }
+
   @override
   List<Object?> get props => [
     id,

@@ -948,37 +948,38 @@ class _ChatPageState extends State<ChatPage> {
   }
 
   Future<void> _scrollMessagesToBottom({required bool animated}) async {
-    await Future<void>.delayed(Duration.zero);
-    if (!mounted || !_messagesScrollController.hasClients) {
-      return;
-    }
-    final position = _messagesScrollController.position;
-    final target = position.maxScrollExtent;
-    if (!target.isFinite) {
-      return;
-    }
-
-    final distance = (target - position.pixels).abs();
-    if (distance <= 1) {
-      return;
-    }
-
-    if (!animated) {
-      _messagesScrollController.jumpTo(target);
-      return;
-    }
-
-    try {
-      await _messagesScrollController.animateTo(
-        target,
-        duration: const Duration(milliseconds: 220),
-        curve: Curves.easeOutCubic,
-      );
-    } catch (_) {
-      if (mounted && _messagesScrollController.hasClients) {
-        _messagesScrollController.jumpTo(target);
+    WidgetsBinding.instance.addPostFrameCallback((_) async {
+      if (!mounted || !_messagesScrollController.hasClients) {
+        return;
       }
-    }
+      final position = _messagesScrollController.position;
+      final target = position.maxScrollExtent;
+      if (!target.isFinite) {
+        return;
+      }
+
+      final distance = (target - position.pixels).abs();
+      if (distance <= 1) {
+        return;
+      }
+
+      if (!animated) {
+        _messagesScrollController.jumpTo(target);
+        return;
+      }
+
+      try {
+        await _messagesScrollController.animateTo(
+          target,
+          duration: const Duration(milliseconds: 220),
+          curve: Curves.easeOutCubic,
+        );
+      } catch (_) {
+        if (mounted && _messagesScrollController.hasClients) {
+          _messagesScrollController.jumpTo(target);
+        }
+      }
+    });
   }
 
   Future<void> _setTypingState(bool typing) async {

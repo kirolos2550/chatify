@@ -11,6 +11,7 @@ import 'package:chatify/features/search/presentation/pages/search_page.dart';
 import 'package:chatify/features/settings/presentation/pages/settings_page.dart';
 import 'package:chatify/features/status/presentation/pages/status_page.dart';
 import 'package:chatify/core/common/app_logger.dart';
+import 'package:chatify/core/common/bottom_nav_visibility.dart';
 import 'package:chatify/l10n/app_localizations.dart';
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
@@ -137,37 +138,192 @@ class _HomeShell extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final l10n = AppLocalizations.of(context)!;
+    final items = <_FloatingNavItemData>[
+      _FloatingNavItemData(
+        icon: Icons.chat_bubble_outline_rounded,
+        selectedIcon: Icons.chat_bubble_rounded,
+        label: l10n.chats,
+      ),
+      _FloatingNavItemData(
+        icon: Icons.auto_stories_outlined,
+        selectedIcon: Icons.auto_stories_rounded,
+        label: l10n.status,
+      ),
+      _FloatingNavItemData(
+        icon: Icons.call_outlined,
+        selectedIcon: Icons.call_rounded,
+        label: l10n.calls,
+      ),
+      _FloatingNavItemData(
+        icon: Icons.settings_outlined,
+        selectedIcon: Icons.settings_rounded,
+        label: l10n.settings,
+      ),
+    ];
+
     return Scaffold(
+      extendBody: true,
       body: navigationShell,
-      bottomNavigationBar: NavigationBar(
-        selectedIndex: navigationShell.currentIndex,
-        destinations: [
-          NavigationDestination(
-            icon: Icon(Icons.chat_bubble_outline),
-            selectedIcon: Icon(Icons.chat_bubble),
-            label: l10n.chats,
+      bottomNavigationBar: ValueListenableBuilder<bool>(
+        valueListenable: BottomNavVisibilityController.isVisible,
+        builder: (context, isVisible, child) {
+          if (!isVisible) {
+            return const SizedBox.shrink();
+          }
+          return SafeArea(
+            minimum: const EdgeInsets.fromLTRB(18, 0, 18, 18),
+            child: child!,
+          );
+        },
+        child: _FloatingBottomNavBar(
+          currentIndex: navigationShell.currentIndex,
+          items: items,
+          onDestinationSelected: (index) => navigationShell.goBranch(
+            index,
+            initialLocation: index == navigationShell.currentIndex,
           ),
-          NavigationDestination(
-            icon: Icon(Icons.auto_stories_outlined),
-            selectedIcon: Icon(Icons.auto_stories),
-            label: l10n.status,
-          ),
-          NavigationDestination(
-            icon: Icon(Icons.call_outlined),
-            selectedIcon: Icon(Icons.call),
-            label: l10n.calls,
-          ),
-          NavigationDestination(
-            icon: Icon(Icons.settings_outlined),
-            selectedIcon: Icon(Icons.settings),
-            label: l10n.settings,
-          ),
-        ],
-        onDestinationSelected: (index) => navigationShell.goBranch(
-          index,
-          initialLocation: index == navigationShell.currentIndex,
         ),
       ),
     );
   }
+}
+
+class _FloatingBottomNavBar extends StatelessWidget {
+  const _FloatingBottomNavBar({
+    required this.currentIndex,
+    required this.items,
+    required this.onDestinationSelected,
+  });
+
+  final int currentIndex;
+  final List<_FloatingNavItemData> items;
+  final ValueChanged<int> onDestinationSelected;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final isDark = theme.brightness == Brightness.dark;
+    final backgroundColor = isDark
+        ? const Color(0xFF16273A)
+        : const Color(0xFF203347);
+    final borderColor = Colors.white.withAlpha(isDark ? 30 : 22);
+
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        color: backgroundColor,
+        borderRadius: BorderRadius.circular(30),
+        border: Border.all(color: borderColor),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withAlpha(isDark ? 120 : 55),
+            blurRadius: 28,
+            offset: const Offset(0, 16),
+          ),
+        ],
+      ),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 10),
+        child: Row(
+          children: [
+            for (var index = 0; index < items.length; index++)
+              Expanded(
+                child: _FloatingBottomNavItem(
+                  data: items[index],
+                  selected: index == currentIndex,
+                  onTap: () => onDestinationSelected(index),
+                ),
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _FloatingBottomNavItem extends StatelessWidget {
+  const _FloatingBottomNavItem({
+    required this.data,
+    required this.selected,
+    required this.onTap,
+  });
+
+  final _FloatingNavItemData data;
+  final bool selected;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    const activeColor = Colors.white;
+    final inactiveColor = Colors.white.withAlpha(178);
+
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        borderRadius: BorderRadius.circular(24),
+        onTap: onTap,
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              AnimatedContainer(
+                duration: const Duration(milliseconds: 220),
+                curve: Curves.easeOutCubic,
+                width: 40,
+                height: 40,
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  color: selected
+                      ? const Color(0xFF2395FF)
+                      : Colors.transparent,
+                  boxShadow: selected
+                      ? [
+                          BoxShadow(
+                            color: const Color(0xFF2395FF).withAlpha(90),
+                            blurRadius: 16,
+                            offset: const Offset(0, 6),
+                          ),
+                        ]
+                      : null,
+                ),
+                child: Icon(
+                  selected ? data.selectedIcon : data.icon,
+                  color: activeColor,
+                  size: 21,
+                ),
+              ),
+              const SizedBox(height: 6),
+              AnimatedDefaultTextStyle(
+                duration: const Duration(milliseconds: 220),
+                curve: Curves.easeOutCubic,
+                style: Theme.of(context).textTheme.labelSmall!.copyWith(
+                  color: selected ? activeColor : inactiveColor,
+                  fontWeight: selected ? FontWeight.w700 : FontWeight.w500,
+                  fontSize: 11.5,
+                ),
+                child: Text(
+                  data.label,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  textAlign: TextAlign.center,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _FloatingNavItemData {
+  const _FloatingNavItemData({
+    required this.icon,
+    required this.selectedIcon,
+    required this.label,
+  });
+
+  final IconData icon;
+  final IconData selectedIcon;
+  final String label;
 }

@@ -20,6 +20,10 @@ service cloud.firestore {
       match /backup/{docId} {
         allow read, write: if isSignedIn() && request.auth.uid == uid;
       }
+
+      match /settings/{docId} {
+        allow read, write: if isSignedIn() && request.auth.uid == uid;
+      }
     }
 
     match /conversations/{conversationId} {

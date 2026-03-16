@@ -163,7 +163,16 @@ Verify token must match `WHATSAPP_VERIFY_TOKEN`.
 6. Enter phone numbers in E.164 format (example: `+2010XXXXXXXX`).
 7. After successful OTP verification, the app now auto-creates/updates `users/{uid}` in Firestore.
 
-## Latest Updates (v1.1.1+12)
+## Latest Updates (v1.1.2+13)
+
+- Tightened the chats filter card spacing and pill sizing to reduce vertical footprint.
+- Floating action buttons now clear the floating bottom nav consistently (Chats + Status).
+- Chat list updates apply immediately after adding/removing a list, then reconcile with backend.
+- Chat threads now land on the newest message by default.
+- "Delete for everyone" removes the message entirely instead of showing a placeholder.
+- Suppressed noisy `permission-denied` snackbars in Status feed when rules block reads.
+
+## Previous Updates (v1.1.1+12)
 
 - Hardened one-to-one WebRTC call signaling:
   - Added optional Supabase-backed ICE candidate transport for call setup.

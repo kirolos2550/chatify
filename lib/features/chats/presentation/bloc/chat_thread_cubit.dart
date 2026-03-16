@@ -867,17 +867,23 @@ class ChatThreadCubit extends Cubit<ChatThreadState> {
   }) async {
     final startedAt = DateTime.now().toUtc();
     final views = <ChatMessageView>[];
+    final visibleMessages = messages
+        .where((message) => message.deletedForAllAt == null)
+        .toList(growable: false);
     var chunkCount = 0;
 
-    for (var start = 0; start < messages.length; start += _snapshotChunkSize) {
-      final endExclusive = (start + _snapshotChunkSize < messages.length)
-          ? start + _snapshotChunkSize
-          : messages.length;
-      final chunk = messages.sublist(start, endExclusive);
+    for (var start = 0;
+        start < visibleMessages.length;
+        start += _snapshotChunkSize) {
+      final endExclusive =
+          (start + _snapshotChunkSize < visibleMessages.length)
+              ? start + _snapshotChunkSize
+              : visibleMessages.length;
+      final chunk = visibleMessages.sublist(start, endExclusive);
       final chunkViews = await Future.wait(chunk.map(_toMessageView));
       views.addAll(chunkViews);
       chunkCount++;
-      if (endExclusive < messages.length) {
+      if (endExclusive < visibleMessages.length) {
         await Future<void>.delayed(Duration.zero);
       }
     }

@@ -42,39 +42,14 @@ class InMemoryMessageRepository implements MessageRepository {
     required String messageId,
     required String editCiphertext,
   }) async {
-    try {
-      final list = _messagesFor(conversationId);
-      final index = list.indexWhere((item) => item.id == messageId);
-      if (index < 0) {
-        return const FailureResult(Failure('Message not found'));
-      }
-      final current = list[index];
-      list[index] = Message(
-        id: current.id,
-        conversationId: current.conversationId,
-        senderId: current.senderId,
-        type: current.type,
+    return _updateMessage(
+      conversationId: conversationId,
+      messageId: messageId,
+      update: (current) => current.copyWith(
         ciphertext: editCiphertext,
-        clientTimestamp: current.clientTimestamp,
-        serverSeq: current.serverSeq,
         editedAt: DateTime.now().toUtc(),
-        deletedForAllAt: current.deletedForAllAt,
-        deletedForUserIds: current.deletedForUserIds,
-        deliveredToUserIds: current.deliveredToUserIds,
-        readByUserIds: current.readByUserIds,
-        localStatus: current.localStatus,
-        deviceId: current.deviceId,
-        replyToMessageId: current.replyToMessageId,
-        e2eeVersion: current.e2eeVersion,
-        starredByUserIds: current.starredByUserIds,
-        pinnedByUserIds: current.pinnedByUserIds,
-        reactionsByUser: current.reactionsByUser,
-      );
-      _emit(conversationId);
-      return const Success(null);
-    } catch (error) {
-      return FailureResult(Failure(error.toString()));
-    }
+      ),
+    );
   }
 
   @override
@@ -82,39 +57,14 @@ class InMemoryMessageRepository implements MessageRepository {
     required String conversationId,
     required String messageId,
   }) async {
-    try {
-      final list = _messagesFor(conversationId);
-      final index = list.indexWhere((item) => item.id == messageId);
-      if (index < 0) {
-        return const FailureResult(Failure('Message not found'));
-      }
-      final current = list[index];
-      list[index] = Message(
-        id: current.id,
-        conversationId: current.conversationId,
-        senderId: current.senderId,
-        type: current.type,
+    return _updateMessage(
+      conversationId: conversationId,
+      messageId: messageId,
+      update: (current) => current.copyWith(
         ciphertext: '',
-        clientTimestamp: current.clientTimestamp,
-        serverSeq: current.serverSeq,
-        editedAt: current.editedAt,
         deletedForAllAt: DateTime.now().toUtc(),
-        deletedForUserIds: current.deletedForUserIds,
-        deliveredToUserIds: current.deliveredToUserIds,
-        readByUserIds: current.readByUserIds,
-        localStatus: current.localStatus,
-        deviceId: current.deviceId,
-        replyToMessageId: current.replyToMessageId,
-        e2eeVersion: current.e2eeVersion,
-        starredByUserIds: current.starredByUserIds,
-        pinnedByUserIds: current.pinnedByUserIds,
-        reactionsByUser: current.reactionsByUser,
-      );
-      _emit(conversationId);
-      return const Success(null);
-    } catch (error) {
-      return FailureResult(Failure(error.toString()));
-    }
+      ),
+    );
   }
 
   @override
@@ -152,26 +102,9 @@ class InMemoryMessageRepository implements MessageRepository {
           continue;
         }
         changed = true;
-        list[i] = Message(
-          id: current.id,
-          conversationId: current.conversationId,
-          senderId: current.senderId,
-          type: current.type,
-          ciphertext: current.ciphertext,
-          clientTimestamp: current.clientTimestamp,
-          serverSeq: current.serverSeq,
-          editedAt: current.editedAt,
-          deletedForAllAt: current.deletedForAllAt,
-          deletedForUserIds: current.deletedForUserIds,
+        list[i] = current.copyWith(
           deliveredToUserIds: delivered.toList(growable: false),
           readByUserIds: read.toList(growable: false),
-          localStatus: current.localStatus,
-          deviceId: current.deviceId,
-          replyToMessageId: current.replyToMessageId,
-          e2eeVersion: current.e2eeVersion,
-          starredByUserIds: current.starredByUserIds,
-          pinnedByUserIds: current.pinnedByUserIds,
-          reactionsByUser: current.reactionsByUser,
         );
       }
       if (changed) {
@@ -203,46 +136,20 @@ class InMemoryMessageRepository implements MessageRepository {
     required String userId,
     String? emoji,
   }) async {
-    try {
-      final list = _messagesFor(conversationId);
-      final index = list.indexWhere((item) => item.id == messageId);
-      if (index < 0) {
-        return const FailureResult(Failure('Message not found'));
-      }
-      final current = list[index];
-      final reactions = Map<String, String>.from(current.reactionsByUser);
-      final normalizedEmoji = emoji?.trim();
-      if (normalizedEmoji == null || normalizedEmoji.isEmpty) {
-        reactions.remove(userId);
-      } else {
-        reactions[userId] = normalizedEmoji;
-      }
-      list[index] = Message(
-        id: current.id,
-        conversationId: current.conversationId,
-        senderId: current.senderId,
-        type: current.type,
-        ciphertext: current.ciphertext,
-        clientTimestamp: current.clientTimestamp,
-        serverSeq: current.serverSeq,
-        editedAt: current.editedAt,
-        deletedForAllAt: current.deletedForAllAt,
-        deletedForUserIds: current.deletedForUserIds,
-        deliveredToUserIds: current.deliveredToUserIds,
-        readByUserIds: current.readByUserIds,
-        localStatus: current.localStatus,
-        deviceId: current.deviceId,
-        replyToMessageId: current.replyToMessageId,
-        e2eeVersion: current.e2eeVersion,
-        starredByUserIds: current.starredByUserIds,
-        pinnedByUserIds: current.pinnedByUserIds,
-        reactionsByUser: reactions,
-      );
-      _emit(conversationId);
-      return const Success(null);
-    } catch (error) {
-      return FailureResult(Failure(error.toString()));
-    }
+    return _updateMessage(
+      conversationId: conversationId,
+      messageId: messageId,
+      update: (current) {
+        final reactions = Map<String, String>.from(current.reactionsByUser);
+        final normalizedEmoji = emoji?.trim();
+        if (normalizedEmoji == null || normalizedEmoji.isEmpty) {
+          reactions.remove(userId);
+        } else {
+          reactions[userId] = normalizedEmoji;
+        }
+        return current.copyWith(reactionsByUser: reactions);
+      },
+    );
   }
 
   @override
@@ -252,45 +159,21 @@ class InMemoryMessageRepository implements MessageRepository {
     required String userId,
     required bool starred,
   }) async {
-    try {
-      final list = _messagesFor(conversationId);
-      final index = list.indexWhere((item) => item.id == messageId);
-      if (index < 0) {
-        return const FailureResult(Failure('Message not found'));
-      }
-      final current = list[index];
-      final starredBy = current.starredByUserIds.toSet();
-      if (starred) {
-        starredBy.add(userId);
-      } else {
-        starredBy.remove(userId);
-      }
-      list[index] = Message(
-        id: current.id,
-        conversationId: current.conversationId,
-        senderId: current.senderId,
-        type: current.type,
-        ciphertext: current.ciphertext,
-        clientTimestamp: current.clientTimestamp,
-        serverSeq: current.serverSeq,
-        editedAt: current.editedAt,
-        deletedForAllAt: current.deletedForAllAt,
-        deletedForUserIds: current.deletedForUserIds,
-        deliveredToUserIds: current.deliveredToUserIds,
-        readByUserIds: current.readByUserIds,
-        localStatus: current.localStatus,
-        deviceId: current.deviceId,
-        replyToMessageId: current.replyToMessageId,
-        e2eeVersion: current.e2eeVersion,
-        starredByUserIds: starredBy.toList(growable: false),
-        pinnedByUserIds: current.pinnedByUserIds,
-        reactionsByUser: current.reactionsByUser,
-      );
-      _emit(conversationId);
-      return const Success(null);
-    } catch (error) {
-      return FailureResult(Failure(error.toString()));
-    }
+    return _updateMessage(
+      conversationId: conversationId,
+      messageId: messageId,
+      update: (current) {
+        final starredBy = current.starredByUserIds.toSet();
+        if (starred) {
+          starredBy.add(userId);
+        } else {
+          starredBy.remove(userId);
+        }
+        return current.copyWith(
+          starredByUserIds: starredBy.toList(growable: false),
+        );
+      },
+    );
   }
 
   @override
@@ -300,45 +183,21 @@ class InMemoryMessageRepository implements MessageRepository {
     required String userId,
     required bool pinned,
   }) async {
-    try {
-      final list = _messagesFor(conversationId);
-      final index = list.indexWhere((item) => item.id == messageId);
-      if (index < 0) {
-        return const FailureResult(Failure('Message not found'));
-      }
-      final current = list[index];
-      final pinnedBy = current.pinnedByUserIds.toSet();
-      if (pinned) {
-        pinnedBy.add(userId);
-      } else {
-        pinnedBy.remove(userId);
-      }
-      list[index] = Message(
-        id: current.id,
-        conversationId: current.conversationId,
-        senderId: current.senderId,
-        type: current.type,
-        ciphertext: current.ciphertext,
-        clientTimestamp: current.clientTimestamp,
-        serverSeq: current.serverSeq,
-        editedAt: current.editedAt,
-        deletedForAllAt: current.deletedForAllAt,
-        deletedForUserIds: current.deletedForUserIds,
-        deliveredToUserIds: current.deliveredToUserIds,
-        readByUserIds: current.readByUserIds,
-        localStatus: current.localStatus,
-        deviceId: current.deviceId,
-        replyToMessageId: current.replyToMessageId,
-        e2eeVersion: current.e2eeVersion,
-        starredByUserIds: current.starredByUserIds,
-        pinnedByUserIds: pinnedBy.toList(growable: false),
-        reactionsByUser: current.reactionsByUser,
-      );
-      _emit(conversationId);
-      return const Success(null);
-    } catch (error) {
-      return FailureResult(Failure(error.toString()));
-    }
+    return _updateMessage(
+      conversationId: conversationId,
+      messageId: messageId,
+      update: (current) {
+        final pinnedBy = current.pinnedByUserIds.toSet();
+        if (pinned) {
+          pinnedBy.add(userId);
+        } else {
+          pinnedBy.remove(userId);
+        }
+        return current.copyWith(
+          pinnedByUserIds: pinnedBy.toList(growable: false),
+        );
+      },
+    );
   }
 
   List<Message> _messagesFor(String conversationId) {
@@ -353,6 +212,25 @@ class InMemoryMessageRepository implements MessageRepository {
       conversationId,
       () => StreamController<List<Message>>.broadcast(),
     );
+  }
+
+  Future<Result<void>> _updateMessage({
+    required String conversationId,
+    required String messageId,
+    required Message Function(Message current) update,
+  }) async {
+    try {
+      final list = _messagesFor(conversationId);
+      final index = list.indexWhere((item) => item.id == messageId);
+      if (index < 0) {
+        return const FailureResult(Failure('Message not found'));
+      }
+      list[index] = update(list[index]);
+      _emit(conversationId);
+      return const Success(null);
+    } catch (error) {
+      return FailureResult(Failure(error.toString()));
+    }
   }
 
   void _emit(String conversationId) {

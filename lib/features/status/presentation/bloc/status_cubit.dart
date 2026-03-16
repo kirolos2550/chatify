@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:chatify/core/domain/entities/status_item.dart';
 import 'package:chatify/core/domain/repositories/status_repository.dart';
+import 'package:firebase_core/firebase_core.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:injectable/injectable.dart';
 
@@ -37,6 +38,10 @@ class StatusCubit extends Cubit<StatusState> {
       (items) =>
           emit(state.copyWith(items: items, loading: false, clearError: true)),
       onError: (Object error, StackTrace stackTrace) {
+        if (error is FirebaseException && error.code == 'permission-denied') {
+          emit(state.copyWith(loading: false, clearError: true));
+          return;
+        }
         emit(state.copyWith(loading: false, errorMessage: error.toString()));
       },
     );

@@ -1,4 +1,5 @@
 import 'package:chatify/app/di/injection.dart';
+import 'package:chatify/core/common/floating_nav_metrics.dart';
 import 'package:chatify/core/common/result.dart';
 import 'package:chatify/features/status/domain/usecases/create_status_use_case.dart';
 import 'package:chatify/features/status/presentation/bloc/status_cubit.dart';
@@ -182,6 +183,7 @@ class _StatusScaffold extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final bottomClearance = floatingNavBarClearance;
     return Scaffold(
       appBar: AppBar(title: const Text('Status')),
       body: loading
@@ -191,7 +193,7 @@ class _StatusScaffold extends StatelessWidget {
                 if (showDemoHint)
                   const MaterialBanner(
                     content: Text(
-                      'Status backend is not active for this user yet. Demo entries are shown.',
+                      'Status backend is not active for this user yet.',
                     ),
                     actions: [SizedBox.shrink()],
                   ),
@@ -224,10 +226,13 @@ class _StatusScaffold extends StatelessWidget {
                 ),
               ],
             ),
-      floatingActionButton: FloatingActionButton(
-        onPressed: onAddStatus,
-        tooltip: 'Add status',
-        child: const Icon(Icons.add),
+      floatingActionButton: Padding(
+        padding: EdgeInsets.only(bottom: bottomClearance),
+        child: FloatingActionButton(
+          onPressed: onAddStatus,
+          tooltip: 'Add status',
+          child: const Icon(Icons.add),
+        ),
       ),
     );
   }

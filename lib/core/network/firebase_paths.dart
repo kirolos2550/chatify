@@ -3,6 +3,7 @@ abstract final class FirebasePaths {
   static const devices = 'devices';
   static const privacy = 'privacy';
   static const settings = 'settings';
+  static const lists = 'lists';
   static const conversations = 'conversations';
   static const members = 'members';
   static const messages = 'messages';

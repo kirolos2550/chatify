@@ -1,3 +1,4 @@
+// app/app.dart
 import 'package:chatify/app/flavor.dart';
 import 'package:chatify/app/localization/app_locale_controller.dart';
 import 'package:chatify/app/router/app_router.dart';
