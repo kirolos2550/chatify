@@ -108,6 +108,7 @@ class ChatThreadCubit extends Cubit<ChatThreadState> {
   static const int _snapshotChunkSize = 40;
   static const Duration _decryptFallbackLogWindow = Duration(seconds: 20);
   static const Duration _snapshotPerfLogInterval = Duration(seconds: 15);
+  static const Duration _messageEditWindow = Duration(minutes: 30);
 
   void start(String conversationId) {
     final startedAt = DateTime.now().toUtc();
@@ -292,6 +293,23 @@ class ChatThreadCubit extends Cubit<ChatThreadState> {
       );
       return false;
     }
+    if (!_isEditWindowOpen(message)) {
+      _logActionFailure(
+        action: 'chat.edit',
+        reason: 'edit_window_expired',
+        metadata: <String, Object?>{
+          'conversationId': conversationId,
+          'messageId': message.id,
+          'sentAt': message.sentAt.toIso8601String(),
+        },
+      );
+      emit(
+        state.copyWith(
+          errorMessage: 'Messages can only be edited within 30 minutes.',
+        ),
+      );
+      return false;
+    }
 
     _logActionStart('chat.edit', <String, Object?>{
       'conversationId': conversationId,
@@ -344,6 +362,14 @@ class ChatThreadCubit extends Cubit<ChatThreadState> {
       emit(state.copyWith(errorMessage: error.toString()));
       return false;
     }
+  }
+
+  bool _isEditWindowOpen(ChatMessageView message) {
+    final elapsed = DateTime.now().difference(message.sentAt);
+    if (elapsed.isNegative) {
+      return true;
+    }
+    return elapsed <= _messageEditWindow;
   }
 
   Future<bool> deleteMessageForEveryone(ChatMessageView message) async {

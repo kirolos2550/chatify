@@ -163,7 +163,15 @@ Verify token must match `WHATSAPP_VERIFY_TOKEN`.
 6. Enter phone numbers in E.164 format (example: `+2010XXXXXXXX`).
 7. After successful OTP verification, the app now auto-creates/updates `users/{uid}` in Firestore.
 
-## Latest Updates (v1.1.2+13)
+## Latest Updates (v1.1.3+14)
+
+- Added rich status composer (text/photo/video), custom text/background colors, optional 30s music, and 60s video cap.
+- Full-screen status viewer with audio/video playback and automatic floating bottom-nav hide while viewing.
+- `My status` now shows multiple updates, per-status view count, viewer list, and long-press edit/delete.
+- Status visibility is limited to users who already have a conversation with you.
+- View tracking is stored on each status item (`viewedByUserIds`).
+
+## Previous Updates (v1.1.2+13)
 
 - Tightened the chats filter card spacing and pill sizing to reduce vertical footprint.
 - Floating action buttons now clear the floating bottom nav consistently (Chats + Status).

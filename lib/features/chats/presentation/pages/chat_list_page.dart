@@ -910,6 +910,7 @@ class _ChatsScaffold extends StatelessWidget {
       floatingActionButton: Padding(
         padding: EdgeInsets.only(bottom: bottomClearance),
         child: FloatingActionButton(
+          heroTag: 'chatCreateFab',
           onPressed: onCreate,
           tooltip: 'New chat',
           child: const Icon(Icons.chat_bubble_outline),

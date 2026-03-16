@@ -116,6 +116,7 @@ class _ChatPageState extends State<ChatPage> {
   int _lastObservedMessagesCount = 0;
 
   static const double _autoScrollThresholdPx = 72;
+  static const Duration _messageEditWindow = Duration(minutes: 30);
 
   @override
   void initState() {
@@ -4775,6 +4776,9 @@ class _ChatPageState extends State<ChatPage> {
   }
 
   bool _canEditMessage(ChatMessageView message) {
+    if (!_isWithinEditWindow(message)) {
+      return false;
+    }
     if (message.type == MessageType.text) {
       return true;
     }
@@ -4782,6 +4786,14 @@ class _ChatPageState extends State<ChatPage> {
       return false;
     }
     return !_isStructuredSystemPayload(_tryDecodePayload(message.text));
+  }
+
+  bool _isWithinEditWindow(ChatMessageView message) {
+    final elapsed = DateTime.now().difference(message.sentAt);
+    if (elapsed.isNegative) {
+      return true;
+    }
+    return elapsed <= _messageEditWindow;
   }
 
   String _messageSearchPreview(ChatMessageView message) {
