@@ -7,7 +7,6 @@ import 'package:chatify/core/domain/repositories/conversation_repository.dart';
 import 'package:chatify/core/network/firebase_paths.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
-import 'package:firebase_core/firebase_core.dart';
 import 'package:injectable/injectable.dart';
 import 'package:rxdart/rxdart.dart';
 import 'package:uuid/uuid.dart';
@@ -144,6 +143,212 @@ class ConversationRepositoryImpl implements ConversationRepository {
           metadata: <String, Object?>{
             'userId': uid,
             'listName': normalizedName,
+          },
+        ),
+      );
+    }
+  }
+
+  @override
+  Future<Result<String>> renameConversationList({
+    required String currentName,
+    required String newName,
+  }) async {
+    final uid = _auth.currentUser?.uid;
+    if (uid == null) {
+      return const FailureResult(Failure('No active user'));
+    }
+
+    final normalizedCurrent = _normalizeSingleList(currentName);
+    if (normalizedCurrent == null) {
+      return const FailureResult(Failure('Current list name is required'));
+    }
+    final normalizedNext = _normalizeSingleList(newName);
+    if (normalizedNext == null) {
+      return const FailureResult(Failure('New list name is required'));
+    }
+
+    try {
+      final storedLists = await _loadStoredConversationLists(uid);
+      final currentKey = normalizedCurrent.toLowerCase();
+      final nextKey = normalizedNext.toLowerCase();
+      final duplicateExists = storedLists.any(
+        (list) =>
+            list.toLowerCase() == nextKey && list.toLowerCase() != currentKey,
+      );
+      if (duplicateExists) {
+        return const FailureResult(
+          Failure('A list with this name already exists'),
+        );
+      }
+
+      final conversationDocs = await _loadUserConversationDocs(uid);
+      final conversationUpdates = <_ConversationListDocUpdate>[];
+      var foundInConversations = false;
+      for (final doc in conversationDocs) {
+        final data = doc.data();
+        final lists = _listsForUser(data['listsByUserIds'], uid);
+        final labels = _listsForUser(data['labelsByUserIds'], uid);
+        final hasMatch =
+            _containsListName(lists, normalizedCurrent) ||
+            _containsListName(labels, normalizedCurrent);
+        if (!hasMatch) {
+          continue;
+        }
+        foundInConversations = true;
+        conversationUpdates.add(
+          _ConversationListDocUpdate(
+            reference: doc.reference,
+            lists: _replaceListName(
+              lists,
+              source: normalizedCurrent,
+              target: normalizedNext,
+            ),
+            labels: _replaceListName(
+              labels,
+              source: normalizedCurrent,
+              target: normalizedNext,
+            ),
+          ),
+        );
+      }
+
+      final foundInStoredLists = _containsListName(
+        storedLists,
+        normalizedCurrent,
+      );
+      if (!foundInStoredLists && !foundInConversations) {
+        return const FailureResult(Failure('List not found'));
+      }
+
+      final updatedStoredLists = foundInStoredLists
+          ? _replaceListName(
+              storedLists,
+              source: normalizedCurrent,
+              target: normalizedNext,
+            )
+          : _normalizeLists(<String>[...storedLists, normalizedNext]);
+
+      await _persistConversationListUpdates(
+        uid: uid,
+        storedLists: updatedStoredLists,
+        conversationUpdates: conversationUpdates,
+      );
+      return Success(normalizedNext);
+    } catch (e, stackTrace) {
+      return FailureResult(
+        _failureFromFirestore(
+          e,
+          stackTrace: stackTrace,
+          operation: 'renameConversationList',
+          metadata: <String, Object?>{
+            'userId': uid,
+            'currentName': normalizedCurrent,
+            'newName': normalizedNext,
+          },
+        ),
+      );
+    }
+  }
+
+  @override
+  Future<Result<void>> deleteConversationList({required String name}) async {
+    final uid = _auth.currentUser?.uid;
+    if (uid == null) {
+      return const FailureResult(Failure('No active user'));
+    }
+
+    final normalizedName = _normalizeSingleList(name);
+    if (normalizedName == null) {
+      return const FailureResult(Failure('List name is required'));
+    }
+
+    try {
+      final storedLists = await _loadStoredConversationLists(uid);
+      final conversationDocs = await _loadUserConversationDocs(uid);
+      final conversationUpdates = <_ConversationListDocUpdate>[];
+      var foundInConversations = false;
+      for (final doc in conversationDocs) {
+        final data = doc.data();
+        final lists = _listsForUser(data['listsByUserIds'], uid);
+        final labels = _listsForUser(data['labelsByUserIds'], uid);
+        final hasMatch =
+            _containsListName(lists, normalizedName) ||
+            _containsListName(labels, normalizedName);
+        if (!hasMatch) {
+          continue;
+        }
+        foundInConversations = true;
+        conversationUpdates.add(
+          _ConversationListDocUpdate(
+            reference: doc.reference,
+            lists: _replaceListName(lists, source: normalizedName),
+            labels: _replaceListName(labels, source: normalizedName),
+          ),
+        );
+      }
+
+      final foundInStoredLists = _containsListName(storedLists, normalizedName);
+      if (!foundInStoredLists && !foundInConversations) {
+        return const FailureResult(Failure('List not found'));
+      }
+
+      final updatedStoredLists = _replaceListName(
+        storedLists,
+        source: normalizedName,
+      );
+      await _persistConversationListUpdates(
+        uid: uid,
+        storedLists: updatedStoredLists,
+        conversationUpdates: conversationUpdates,
+      );
+      return const Success(null);
+    } catch (e, stackTrace) {
+      return FailureResult(
+        _failureFromFirestore(
+          e,
+          stackTrace: stackTrace,
+          operation: 'deleteConversationList',
+          metadata: <String, Object?>{'userId': uid, 'name': normalizedName},
+        ),
+      );
+    }
+  }
+
+  @override
+  Future<Result<void>> reorderConversationLists({
+    required List<String> orderedNames,
+  }) async {
+    final uid = _auth.currentUser?.uid;
+    if (uid == null) {
+      return const FailureResult(Failure('No active user'));
+    }
+
+    try {
+      final normalizedOrder = _normalizeLists(orderedNames);
+      final storedLists = await _loadStoredConversationLists(uid);
+      final mergedOrder = _normalizeLists(<String>[
+        ...normalizedOrder,
+        ...storedLists.where(
+          (stored) => !normalizedOrder.any(
+            (item) => item.toLowerCase() == stored.toLowerCase(),
+          ),
+        ),
+      ]);
+      await _listsDoc(uid).set({
+        'items': mergedOrder,
+        'updatedAt': DateTime.now().millisecondsSinceEpoch,
+      }, SetOptions(merge: true));
+      return const Success(null);
+    } catch (e, stackTrace) {
+      return FailureResult(
+        _failureFromFirestore(
+          e,
+          stackTrace: stackTrace,
+          operation: 'reorderConversationLists',
+          metadata: <String, Object?>{
+            'userId': uid,
+            'orderedNames': orderedNames,
           },
         ),
       );
@@ -423,6 +628,58 @@ class ConversationRepositoryImpl implements ConversationRepository {
     }
   }
 
+  Future<List<String>> _loadStoredConversationLists(String uid) async {
+    final snapshot = await _listsDoc(uid).get();
+    final data = snapshot.data() ?? const <String, dynamic>{};
+    final rawItems = data['items'];
+    if (rawItems is! List) {
+      return const <String>[];
+    }
+    return _normalizeLists(rawItems.whereType<String>());
+  }
+
+  Future<List<QueryDocumentSnapshot<Map<String, dynamic>>>>
+  _loadUserConversationDocs(String uid) async {
+    final snapshot = await _firestore
+        .collection(FirebasePaths.conversations)
+        .where('memberIds', arrayContains: uid)
+        .get();
+    return snapshot.docs;
+  }
+
+  Future<void> _persistConversationListUpdates({
+    required String uid,
+    required List<String> storedLists,
+    required List<_ConversationListDocUpdate> conversationUpdates,
+  }) async {
+    final now = DateTime.now().millisecondsSinceEpoch;
+    await _listsDoc(
+      uid,
+    ).set({'items': storedLists, 'updatedAt': now}, SetOptions(merge: true));
+
+    const batchSize = 400;
+    for (
+      var index = 0;
+      index < conversationUpdates.length;
+      index += batchSize
+    ) {
+      final batch = _firestore.batch();
+      final chunk = conversationUpdates.skip(index).take(batchSize);
+      for (final update in chunk) {
+        batch.set(update.reference, {
+          'listsByUserIds.$uid': update.lists.isEmpty
+              ? FieldValue.delete()
+              : update.lists,
+          'labelsByUserIds.$uid': update.labels.isEmpty
+              ? FieldValue.delete()
+              : update.labels,
+          'updatedAt': now,
+        }, SetOptions(merge: true));
+      }
+      await batch.commit();
+    }
+  }
+
   Future<Conversation> _fromDoc(
     DocumentSnapshot<Map<String, dynamic>> doc, {
     required String currentUserId,
@@ -670,6 +927,41 @@ class ConversationRepositoryImpl implements ConversationRepository {
     return deduped.values.toList(growable: false);
   }
 
+  bool _containsListName(Iterable<String> lists, String candidate) {
+    final key = candidate.trim().toLowerCase();
+    if (key.isEmpty) {
+      return false;
+    }
+    for (final list in lists) {
+      if (list.trim().toLowerCase() == key) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  List<String> _replaceListName(
+    Iterable<String> lists, {
+    required String source,
+    String? target,
+  }) {
+    final sourceKey = source.trim().toLowerCase();
+    if (sourceKey.isEmpty) {
+      return _normalizeLists(lists);
+    }
+    final replaced = <String>[];
+    for (final list in lists) {
+      if (list.trim().toLowerCase() == sourceKey) {
+        if (target != null && target.trim().isNotEmpty) {
+          replaced.add(target);
+        }
+        continue;
+      }
+      replaced.add(list);
+    }
+    return _normalizeLists(replaced);
+  }
+
   String? _normalizeSingleList(String value) {
     final normalized = _normalizeLists([value]);
     if (normalized.isEmpty) {
@@ -865,6 +1157,18 @@ class ConversationRepositoryImpl implements ConversationRepository {
         .collection(FirebasePaths.settings)
         .doc(FirebasePaths.lists);
   }
+}
+
+class _ConversationListDocUpdate {
+  const _ConversationListDocUpdate({
+    required this.reference,
+    required this.lists,
+    required this.labels,
+  });
+
+  final DocumentReference<Map<String, dynamic>> reference;
+  final List<String> lists;
+  final List<String> labels;
 }
 
 class _UserProfileSummary {

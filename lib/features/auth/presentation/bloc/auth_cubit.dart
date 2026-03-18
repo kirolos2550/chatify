@@ -1,5 +1,6 @@
 import 'package:chatify/core/common/app_logger.dart';
 import 'package:chatify/core/common/result.dart';
+import 'package:chatify/features/auth/domain/usecases/fetch_latest_dev_otp_code_use_case.dart';
 import 'package:chatify/features/auth/domain/usecases/request_otp_use_case.dart';
 import 'package:chatify/features/auth/domain/usecases/verify_otp_use_case.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
@@ -18,40 +19,56 @@ class AuthState {
   const AuthState({
     this.status = AuthStatus.idle,
     this.errorMessage,
-    this.verificationId,
+    this.otpSessionId,
     this.phoneNumber = '',
+    this.fetchingDevCode = false,
+    this.devOtpCode,
   });
 
   final AuthStatus status;
   final String? errorMessage;
-  final String? verificationId;
+  final String? otpSessionId;
   final String phoneNumber;
+  final bool fetchingDevCode;
+  final String? devOtpCode;
 
-  bool get canVerify => verificationId != null && verificationId!.isNotEmpty;
+  bool get canVerify => otpSessionId != null && otpSessionId!.isNotEmpty;
 
   AuthState copyWith({
     AuthStatus? status,
     String? errorMessage,
-    String? verificationId,
+    String? otpSessionId,
     String? phoneNumber,
+    bool? fetchingDevCode,
+    String? devOtpCode,
     bool clearError = false,
+    bool clearDevOtpCode = false,
+    bool clearOtpSessionId = false,
   }) {
     return AuthState(
       status: status ?? this.status,
       errorMessage: clearError ? null : errorMessage ?? this.errorMessage,
-      verificationId: verificationId ?? this.verificationId,
+      otpSessionId: clearOtpSessionId
+          ? null
+          : otpSessionId ?? this.otpSessionId,
       phoneNumber: phoneNumber ?? this.phoneNumber,
+      fetchingDevCode: fetchingDevCode ?? this.fetchingDevCode,
+      devOtpCode: clearDevOtpCode ? null : devOtpCode ?? this.devOtpCode,
     );
   }
 }
 
 @injectable
 class AuthCubit extends Cubit<AuthState> {
-  AuthCubit(this._requestOtpUseCase, this._verifyOtpUseCase)
-    : super(const AuthState());
+  AuthCubit(
+    this._requestOtpUseCase,
+    this._verifyOtpUseCase,
+    this._fetchLatestDevOtpCodeUseCase,
+  ) : super(const AuthState());
 
   final RequestOtpUseCase _requestOtpUseCase;
   final VerifyOtpUseCase _verifyOtpUseCase;
+  final FetchLatestDevOtpCodeUseCase _fetchLatestDevOtpCodeUseCase;
 
   Future<void> requestOtp(String phoneNumber) async {
     final normalized = _normalizePhone(phoneNumber);
@@ -66,6 +83,8 @@ class AuthCubit extends Cubit<AuthState> {
         state.copyWith(
           status: AuthStatus.error,
           errorMessage: 'Enter a valid phone number in international format',
+          clearOtpSessionId: true,
+          clearDevOtpCode: true,
         ),
       );
       return;
@@ -75,6 +94,8 @@ class AuthCubit extends Cubit<AuthState> {
         status: AuthStatus.sendingCode,
         phoneNumber: normalized,
         clearError: true,
+        clearDevOtpCode: true,
+        clearOtpSessionId: true,
       ),
     );
 
@@ -86,8 +107,8 @@ class AuthCubit extends Cubit<AuthState> {
 
     final result = await _requestOtpUseCase(RequestOtpParams(normalized));
     if (result is Success<String>) {
-      final verificationId = result.value;
-      if (verificationId.isEmpty) {
+      final otpSessionId = result.value;
+      if (otpSessionId.isEmpty) {
         AppLogger.info(
           'Auth request OTP auto-completed and user authenticated',
           event: 'auth.request_otp.success',
@@ -105,13 +126,13 @@ class AuthCubit extends Cubit<AuthState> {
         action: 'auth.request_otp',
         metadata: <String, Object?>{
           'autoVerified': false,
-          'verificationId': verificationId,
+          'otpSessionId': otpSessionId,
         },
       );
       emit(
         state.copyWith(
           status: AuthStatus.codeSent,
-          verificationId: verificationId,
+          otpSessionId: otpSessionId,
           clearError: true,
         ),
       );
@@ -133,11 +154,11 @@ class AuthCubit extends Cubit<AuthState> {
   }
 
   Future<void> verifyOtp(String code) async {
-    final verificationId = state.verificationId;
+    final otpSessionId = state.otpSessionId;
     final otp = code.trim();
-    if (verificationId == null || verificationId.isEmpty) {
+    if (otpSessionId == null || otpSessionId.isEmpty) {
       AppLogger.warning(
-        'Auth verify OTP attempted without verification id',
+        'Auth verify OTP attempted without OTP session id',
         event: 'auth.verify_otp.validation_failed',
         action: 'auth.verify_otp',
       );
@@ -169,13 +190,10 @@ class AuthCubit extends Cubit<AuthState> {
     AppLogger.breadcrumb(
       'auth.verify_otp.start',
       action: 'auth.verify_otp',
-      metadata: <String, Object?>{
-        'verificationId': verificationId,
-        'otpCode': otp,
-      },
+      metadata: <String, Object?>{'otpSessionId': otpSessionId, 'otpCode': otp},
     );
     final result = await _verifyOtpUseCase(
-      VerifyOtpParams(verificationId: verificationId, code: otp),
+      VerifyOtpParams(otpSessionId: otpSessionId, code: otp),
     );
     if (result is Success<void>) {
       AppLogger.info(
@@ -191,7 +209,7 @@ class AuthCubit extends Cubit<AuthState> {
         source: 'AuthCubit',
         operation: 'verifyOtp',
         metadata: <String, Object?>{
-          'verificationId': verificationId,
+          'otpSessionId': otpSessionId,
           'otpCode': otp,
         },
       );
@@ -206,6 +224,76 @@ class AuthCubit extends Cubit<AuthState> {
 
   void clearError() {
     emit(state.copyWith(clearError: true));
+  }
+
+  Future<void> fetchLatestDevOtpCode() async {
+    final phoneNumber = state.phoneNumber.trim();
+    if (phoneNumber.isEmpty) {
+      emit(
+        state.copyWith(
+          status: AuthStatus.error,
+          errorMessage: 'Request OTP first',
+        ),
+      );
+      return;
+    }
+    emit(
+      state.copyWith(
+        fetchingDevCode: true,
+        clearError: true,
+        clearDevOtpCode: true,
+      ),
+    );
+    final result = await _fetchLatestDevOtpCodeUseCase(
+      FetchLatestDevOtpCodeParams(
+        phoneNumber: phoneNumber,
+        otpSessionId: state.otpSessionId,
+      ),
+    );
+    if (result is Success<String?>) {
+      final code = result.value?.trim();
+      if (code == null || code.isEmpty) {
+        emit(
+          state.copyWith(
+            fetchingDevCode: false,
+            status: AuthStatus.error,
+            errorMessage:
+                'No test OTP was found yet. Request a code first, then try again.',
+          ),
+        );
+        return;
+      }
+      emit(
+        state.copyWith(
+          fetchingDevCode: false,
+          devOtpCode: code,
+          clearError: true,
+        ),
+      );
+      return;
+    }
+
+    result.logIfFailure(
+      event: 'auth.fetch_dev_otp.failure',
+      action: 'auth.fetch_dev_otp',
+      source: 'AuthCubit',
+      operation: 'fetchLatestDevOtpCode',
+      metadata: <String, Object?>{
+        'phone': phoneNumber,
+        'otpSessionId': state.otpSessionId,
+      },
+    );
+    emit(
+      state.copyWith(
+        fetchingDevCode: false,
+        status: AuthStatus.error,
+        errorMessage: result.error?.message ?? 'Could not fetch test OTP',
+      ),
+    );
+  }
+
+  void consumeDevOtpCode() {
+    emit(state.copyWith(clearDevOtpCode: true));
   }
 
   String? _normalizePhone(String value) {

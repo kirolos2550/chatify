@@ -7,6 +7,14 @@ abstract interface class ConversationRepository {
 
   Future<Result<String>> createDirectConversation({required String peerUserId});
   Future<Result<String>> createConversationList({required String name});
+  Future<Result<String>> renameConversationList({
+    required String currentName,
+    required String newName,
+  });
+  Future<Result<void>> deleteConversationList({required String name});
+  Future<Result<void>> reorderConversationLists({
+    required List<String> orderedNames,
+  });
 
   Future<Result<String>> createGroup({
     required String title,

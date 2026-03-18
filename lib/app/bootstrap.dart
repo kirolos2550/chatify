@@ -4,6 +4,7 @@ import 'package:chatify/app/app.dart';
 import 'package:chatify/app/di/injection.dart';
 import 'package:chatify/app/emulator_port_probe.dart';
 import 'package:chatify/app/flavor.dart';
+import 'package:chatify/core/common/auth_runtime.dart';
 import 'package:chatify/app/localization/app_locale_controller.dart';
 import 'package:chatify/app/router/app_router.dart';
 import 'package:chatify/app/theme/app_theme_controller.dart';
@@ -41,6 +42,10 @@ const bool _enableCrashlyticsInDebug = bool.fromEnvironment(
   'CRASHLYTICS_IN_DEBUG',
   defaultValue: false,
 );
+const bool _enableLivePhoneAuth = bool.fromEnvironment(
+  'ENABLE_LIVE_PHONE_AUTH',
+  defaultValue: false,
+);
 const String _supabaseUrl = String.fromEnvironment(
   'SUPABASE_URL',
   defaultValue: 'https://uhovvyhmfqogjrayqigl.supabase.co',
@@ -56,6 +61,7 @@ const String _supabaseStorageBucket = String.fromEnvironment(
 
 bool _emulatorsConfigured = false;
 bool _supabaseInitialized = false;
+AppFlavor? _bootstrappedFlavor;
 AppLifecycleListener? _lifecycleListener;
 Timer? _uiHangWatchdog;
 DateTime? _uiHangLastTick;
@@ -70,6 +76,7 @@ final Set<String> _notifiedIncomingCallIds = <String>{};
 Future<void> bootstrap(AppFlavor flavor) async {
   await runZonedGuarded(
     () async {
+      _bootstrappedFlavor = flavor;
       WidgetsFlutterBinding.ensureInitialized();
       await AppLogger.initDebugSession(
         flavor: flavor.nameValue,
@@ -164,6 +171,20 @@ Future<void> bootstrap(AppFlavor flavor) async {
       unawaited(_recordError(error, stackTrace, fatal: true));
     },
   );
+}
+
+Future<AuthRuntimeState> refreshFirebaseRuntime() async {
+  final flavor = _bootstrappedFlavor;
+  if (flavor == null) {
+    const unavailable = AuthRuntimeState.unavailable(
+      reason:
+          'App flavor is not initialized yet. Restart the app and try again.',
+    );
+    AuthRuntimeController.setCurrent(unavailable);
+    return unavailable;
+  }
+  await _configureFirebaseRuntime(flavor);
+  return AuthRuntimeController.current;
 }
 
 void _startUiHangWatchdog() {
@@ -484,26 +505,65 @@ Future<void> _initSupabase() async {
 }
 
 Future<void> _configureFirebaseRuntime(AppFlavor flavor) async {
+  AuthRuntimeController.setCurrent(
+    const AuthRuntimeState.unavailable(
+      reason: 'Phone OTP is unavailable in this runtime.',
+    ),
+  );
   if (Firebase.apps.isEmpty) {
+    AuthRuntimeController.setCurrent(
+      const AuthRuntimeState.unavailable(
+        reason: 'Firebase is not configured in this runtime.',
+      ),
+    );
     return;
   }
   if (_emulatorsConfigured) {
+    AuthRuntimeController.setCurrent(
+      AuthRuntimeState.emulatorOnly(emulatorHost: _resolveEmulatorHost()),
+    );
     return;
   }
 
   final useEmulators =
       flavor == AppFlavor.dev && kDebugMode && _useFirebaseEmulators;
   if (!useEmulators) {
+    if (_enableLivePhoneAuth) {
+      AuthRuntimeController.setCurrent(const AuthRuntimeState.live());
+      AppLogger.info(
+        'Live phone auth enabled for this build.',
+        event: 'auth.runtime.live_enabled',
+        metadata: <String, Object?>{'flavor': flavor.nameValue},
+      );
+      return;
+    }
+    AuthRuntimeController.setCurrent(
+      const AuthRuntimeState.unavailable(
+        reason:
+            'Phone OTP is disabled for this build. Enable live auth with --dart-define=ENABLE_LIVE_PHONE_AUTH=true or use the Firebase Auth Emulator in dev.',
+      ),
+    );
+    AppLogger.info(
+      'Phone auth disabled for this build because live auth is not enabled.',
+      event: 'auth.runtime.disabled',
+      metadata: <String, Object?>{'flavor': flavor.nameValue},
+    );
     return;
   }
 
   final host = _resolveEmulatorHost();
   final authEmulatorReachable = await isTcpPortReachable(host, 9099);
   if (!authEmulatorReachable) {
-    AppLogger.info(
+    AuthRuntimeController.setCurrent(
+      AuthRuntimeState.unavailable(
+        reason:
+            'Firebase Auth Emulator is not reachable on $host:9099. Start firebase emulators:start or run the app with --dart-define=FIREBASE_EMULATOR_HOST=<LAN_IP> for a real phone.',
+      ),
+    );
+    AppLogger.warning(
       'Firebase Auth emulator is not reachable on $host:9099. '
-      'Falling back to live Firebase services.',
-      event: 'firebase.emulator.auth.unreachable',
+      'Phone OTP will remain unavailable instead of falling back to live Firebase.',
+      event: 'auth.runtime.emulator_unreachable',
       metadata: <String, Object?>{'host': host, 'port': 9099},
     );
     return;
@@ -515,6 +575,9 @@ Future<void> _configureFirebaseRuntime(AppFlavor flavor) async {
   FirebaseStorage.instance.useStorageEmulator(host, 9199);
 
   _emulatorsConfigured = true;
+  AuthRuntimeController.setCurrent(
+    AuthRuntimeState.emulatorOnly(emulatorHost: host),
+  );
   AppLogger.info(
     'Firebase emulators enabled on $host (auth:9099, firestore:8080, functions:5001, storage:9199)',
     event: 'firebase.emulator.enabled',

@@ -135,6 +135,7 @@ Verify token must match `WHATSAPP_VERIFY_TOKEN`.
    - `flutter build apk --release --dart-define-from-file=supabase.env.json`
 2. Output path:
    - `build/app/outputs/flutter-apk/app-prod-release.apk`
+   - Mirror output: `build/app/outputs/apk/prod/release/app-prod-release.apk`
 3. Install on a real Android phone (USB debugging enabled):
    - `adb install -r build/app/outputs/flutter-apk/app-prod-release.apk`
    - Or on Windows when `adb` is not in PATH:
@@ -146,11 +147,12 @@ Verify token must match `WHATSAPP_VERIFY_TOKEN`.
    - `firebase emulators:start --project chatify-3d844 --only auth,firestore,functions,storage`
 2. Run app in dev:
    - `flutter run -t lib/main.dart`
-3. App will auto-connect to emulators in debug/dev mode.
-4. To force real Firebase from dev (optional):
-   - `flutter run -t lib/main.dart --dart-define=USE_FIREBASE_EMULATORS=false`
-5. If testing on a real Android phone, set host to your PC LAN IP:
+3. App will auto-connect to emulators in debug/dev mode and the auth screen can auto-fill the latest test OTP from the Firebase Auth Emulator.
+4. If the emulator is unreachable, phone OTP stays disabled instead of silently falling back to live Firebase.
+5. If testing on a real Android phone against your local emulator, set host to your PC LAN IP:
    - `flutter run -t lib/main.dart --dart-define=FIREBASE_EMULATOR_HOST=192.168.1.10`
+6. To force real Firebase from dev and enable live phone OTP:
+   - `flutter run -t lib/main.dart --dart-define=USE_FIREBASE_EMULATORS=false --dart-define=ENABLE_LIVE_PHONE_AUTH=true`
 
 ## Real Phone Auth (Production Firebase)
 
@@ -159,11 +161,19 @@ Verify token must match `WHATSAPP_VERIFY_TOKEN`.
 3. Add your Android SHA fingerprints (`SHA-1` and `SHA-256`) to the Firebase Android app, then download the updated `android/app/google-services.json`.
 4. For iOS, ensure `ios/Runner/GoogleService-Info.plist` matches the same Firebase project.
 5. Run the app against real Firebase (not emulators):
-   - `flutter run -t lib/main.dart --dart-define=USE_FIREBASE_EMULATORS=false`
+   - `flutter run -t lib/main.dart --dart-define=USE_FIREBASE_EMULATORS=false --dart-define=ENABLE_LIVE_PHONE_AUTH=true`
 6. Enter phone numbers in E.164 format (example: `+2010XXXXXXXX`).
 7. After successful OTP verification, the app now auto-creates/updates `users/{uid}` in Firestore.
 
-## Latest Updates (v1.1.3+14)
+## Latest Updates (v1.1.4+15)
+
+- Reworked phone OTP around explicit runtime modes (`emulatorOnly`, `live`, `unavailable`) so dev builds no longer fall back to live auth when the emulator is missing.
+- Added auth-screen runtime guidance with retry action plus a debug-only `Auto-fill test OTP` button that reads the latest code from Firebase Auth Emulator.
+- Refactored OTP handling behind a `PhoneOtpGateway` and switched verification flow to session-based OTP ids for cleaner auth-domain boundaries.
+- Added full chat-list management: rename, delete, and drag-to-reorder custom lists with Firestore persistence across the user's conversations.
+- Fixed status payload color serialization to store exact ARGB values, improving custom text/background color restore behavior.
+
+## Previous Updates (v1.1.3+14)
 
 - Added rich status composer (text/photo/video), custom text/background colors, optional 30s music, and 60s video cap.
 - Full-screen status viewer with audio/video playback and automatic floating bottom-nav hide while viewing.

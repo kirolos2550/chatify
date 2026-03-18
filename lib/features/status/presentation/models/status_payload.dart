@@ -27,8 +27,8 @@ class StatusPayload {
     return <String, Object?>{
       'type': type.name,
       'text': text,
-      'backgroundColor': backgroundColor?.value,
-      'textColor': textColor?.value,
+      'backgroundColor': backgroundColor?.toARGB32(),
+      'textColor': textColor?.toARGB32(),
       'mediaUrl': mediaUrl,
       'caption': caption,
       'musicUrl': musicUrl,

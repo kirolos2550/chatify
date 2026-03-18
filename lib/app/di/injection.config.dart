@@ -38,6 +38,8 @@ import '../../core/data/repositories/notification_repository_impl.dart'
 import '../../core/data/repositories/status_repository_impl.dart' as _i795;
 import '../../core/data/services/clock.dart' as _i330;
 import '../../core/data/services/device_identity_service.dart' as _i763;
+import '../../core/data/services/firebase_phone_otp_gateway.dart' as _i380;
+import '../../core/data/services/phone_otp_gateway.dart' as _i839;
 import '../../core/domain/repositories/auth_repository.dart' as _i497;
 import '../../core/domain/repositories/backup_repository.dart' as _i688;
 import '../../core/domain/repositories/call_repository.dart' as _i743;
@@ -48,6 +50,8 @@ import '../../core/domain/repositories/message_repository.dart' as _i441;
 import '../../core/domain/repositories/notification_repository.dart' as _i399;
 import '../../core/domain/repositories/status_repository.dart' as _i487;
 import '../../core/notifications/chat_local_notifications.dart' as _i40;
+import '../../features/auth/domain/usecases/fetch_latest_dev_otp_code_use_case.dart'
+    as _i146;
 import '../../features/auth/domain/usecases/request_otp_use_case.dart' as _i941;
 import '../../features/auth/domain/usecases/verify_otp_use_case.dart' as _i509;
 import '../../features/auth/presentation/bloc/auth_cubit.dart' as _i52;
@@ -118,6 +122,12 @@ extension GetItInjectableX on _i174.GetIt {
         gh<_i706.Uuid>(),
       ),
     );
+    gh.lazySingleton<_i839.PhoneOtpGateway>(
+      () => _i380.FirebasePhoneOtpGateway(
+        gh<_i59.FirebaseAuth>(),
+        gh<_i361.Dio>(),
+      ),
+    );
     gh.lazySingleton<_i763.DeviceIdentityService>(
       () => _i763.DeviceIdentityService(
         gh<_i558.FlutterSecureStorage>(),
@@ -157,6 +167,7 @@ extension GetItInjectableX on _i174.GetIt {
         gh<_i59.FirebaseAuth>(),
         gh<_i974.FirebaseFirestore>(),
         gh<_i558.FlutterSecureStorage>(),
+        gh<_i839.PhoneOtpGateway>(),
       ),
     );
     gh.factory<_i488.ChatsCubit>(
@@ -164,6 +175,9 @@ extension GetItInjectableX on _i174.GetIt {
     );
     gh.lazySingleton<_i487.StatusRepository>(
       () => _i795.StatusRepositoryImpl(gh<_i974.FirebaseFirestore>()),
+    );
+    gh.factory<_i146.FetchLatestDevOtpCodeUseCase>(
+      () => _i146.FetchLatestDevOtpCodeUseCase(gh<_i497.AuthRepository>()),
     );
     gh.factory<_i941.RequestOtpUseCase>(
       () => _i941.RequestOtpUseCase(gh<_i497.AuthRepository>()),
@@ -176,12 +190,6 @@ extension GetItInjectableX on _i174.GetIt {
     );
     gh.factory<_i690.BackupCubit>(
       () => _i690.BackupCubit(gh<_i688.BackupRepository>()),
-    );
-    gh.factory<_i52.AuthCubit>(
-      () => _i52.AuthCubit(
-        gh<_i941.RequestOtpUseCase>(),
-        gh<_i509.VerifyOtpUseCase>(),
-      ),
     );
     gh.lazySingleton<_i399.NotificationRepository>(
       () => _i968.NotificationRepositoryImpl(
@@ -205,6 +213,13 @@ extension GetItInjectableX on _i174.GetIt {
       () => _i657.CreateStatusUseCase(
         gh<_i487.StatusRepository>(),
         gh<_i706.Uuid>(),
+      ),
+    );
+    gh.factory<_i52.AuthCubit>(
+      () => _i52.AuthCubit(
+        gh<_i941.RequestOtpUseCase>(),
+        gh<_i509.VerifyOtpUseCase>(),
+        gh<_i146.FetchLatestDevOtpCodeUseCase>(),
       ),
     );
     return this;

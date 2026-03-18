@@ -7,8 +7,13 @@ abstract interface class AuthRepository {
   Future<Result<String>> requestOtp({required String phoneNumber});
 
   Future<Result<void>> verifyOtp({
-    required String verificationId,
+    required String otpSessionId,
     required String otpCode,
+  });
+
+  Future<Result<String?>> fetchLatestDevOtpCode({
+    required String phoneNumber,
+    String? otpSessionId,
   });
 
   Future<Result<void>> setTwoStepPin({required String pin});

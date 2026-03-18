@@ -28,8 +28,7 @@ class _ChatListPageState extends State<ChatListPage> {
   ChatListFilter _selectedFilter = ChatListFilter.all;
   String? _selectedList;
   List<String> _localLists = <String>[];
-  final Map<String, List<String>> _listOverrides =
-      <String, List<String>>{};
+  final Map<String, List<String>> _listOverrides = <String, List<String>>{};
 
   bool get _hasWiredChats =>
       getIt.isRegistered<ChatsCubit>() &&
@@ -59,17 +58,19 @@ class _ChatListPageState extends State<ChatListPage> {
   @override
   Widget build(BuildContext context) {
     if (!_hasWiredChats) {
+      final demoItems = _applyListOverrides(_demoItems);
       final availableLists = _mergeAvailableLists(
         explicitLists: _localLists,
-        items: _demoItems,
+        items: demoItems,
       );
-      final selectedList = availableLists.any(
+      final selectedList =
+          availableLists.any(
             (list) => list.toLowerCase() == _selectedList?.toLowerCase(),
           )
           ? _selectedList
           : null;
       final filteredDemoItems = filterChatDiscoveryItems(
-        items: _demoItems,
+        items: demoItems,
         filter: _selectedFilter,
         list: selectedList,
       );
@@ -90,6 +91,7 @@ class _ChatListPageState extends State<ChatListPage> {
         onFilterChanged: _updateFilter,
         onListChanged: _updateList,
         onCreateList: () => _createList(availableLists),
+        onManageLists: () => _openManageListsSheet(availableLists),
         onCreate: _openDemoConversation,
       );
     }
@@ -104,80 +106,85 @@ class _ChatListPageState extends State<ChatListPage> {
       child: StreamBuilder<List<String>>(
         stream: repository.watchConversationLists(),
         initialData: const <String>[],
-        builder: (context, listsSnapshot) => BlocConsumer<ChatsCubit, ChatsState>(
-          listenWhen: (previous, current) =>
-              previous.errorMessage != current.errorMessage &&
-              current.errorMessage != null,
-          listener: (context, state) {
-            final message = state.errorMessage;
-            if (message == null || !mounted) {
-              return;
-            }
-            _showSnack(message);
-            context.read<ChatsCubit>().clearError();
-          },
-          builder: (context, state) {
-            final mappedItems = _applyListOverrides(
-              state.items.map(mapConversationToChatDiscoveryItem).toList(),
-            );
-            final activeItems = mappedItems
-                .where((item) => !item.isArchived)
-                .toList();
-            final archivedItems = mappedItems
-                .where((item) => item.isArchived)
-                .toList();
-            final sourceItems = _showArchivedOnly ? archivedItems : activeItems;
-            final availableLists = _mergeAvailableLists(
-              explicitLists: [
-                ...?listsSnapshot.data,
-                ..._localLists,
-              ],
-              items: mappedItems,
-            );
-            final selectedList = availableLists.any(
-                  (list) => list.toLowerCase() == _selectedList?.toLowerCase(),
-                )
-                ? _selectedList
-                : null;
-            final items = filterChatDiscoveryItems(
-              items: sourceItems,
-              filter: _selectedFilter,
-              list: selectedList,
-            );
-            final totalUnreadCount = activeItems.fold<int>(
-              0,
-              (total, item) => total + item.unreadCount,
-            );
-            return _ChatsScaffold(
-              items: items,
-              loading: state.loading || listsSnapshot.connectionState == ConnectionState.waiting,
-              showDemoHint: false,
-              showArchivedOnly: _showArchivedOnly,
-              archivedCount: archivedItems.length,
-              totalUnreadCount: totalUnreadCount,
-              selectedFilter: _selectedFilter,
-              selectedList: selectedList,
-              availableLists: availableLists,
-              emptyMessage: _showArchivedOnly
-                  ? 'No archived conversations.'
-                  : _buildEmptyMessage(),
-              onOpenConversation: (id) => context.push('/chat/$id'),
-              onConversationLongPress: (item, availableLists) =>
-                  _openConversationActions(item, availableLists),
-              onSearch: () => context.push('/search'),
-              onToggleArchivedView: () {
-                setState(() {
-                  _showArchivedOnly = !_showArchivedOnly;
-                  _selectedList = null;
-                });
+        builder: (context, listsSnapshot) =>
+            BlocConsumer<ChatsCubit, ChatsState>(
+              listenWhen: (previous, current) =>
+                  previous.errorMessage != current.errorMessage &&
+                  current.errorMessage != null,
+              listener: (context, state) {
+                final message = state.errorMessage;
+                if (message == null || !mounted) {
+                  return;
+                }
+                _showSnack(message);
+                context.read<ChatsCubit>().clearError();
               },
-              onFilterChanged: _updateFilter,
-              onListChanged: _updateList,
-              onCreateList: () => _createList(availableLists),
-              onCreate: _openCreateConversationMenu,
-            );
-          },
-        ),
+              builder: (context, state) {
+                final mappedItems = _applyListOverrides(
+                  state.items.map(mapConversationToChatDiscoveryItem).toList(),
+                );
+                final activeItems = mappedItems
+                    .where((item) => !item.isArchived)
+                    .toList();
+                final archivedItems = mappedItems
+                    .where((item) => item.isArchived)
+                    .toList();
+                final sourceItems = _showArchivedOnly
+                    ? archivedItems
+                    : activeItems;
+                final availableLists = _mergeAvailableLists(
+                  explicitLists: [..._localLists, ...?listsSnapshot.data],
+                  items: mappedItems,
+                );
+                final selectedList =
+                    availableLists.any(
+                      (list) =>
+                          list.toLowerCase() == _selectedList?.toLowerCase(),
+                    )
+                    ? _selectedList
+                    : null;
+                final items = filterChatDiscoveryItems(
+                  items: sourceItems,
+                  filter: _selectedFilter,
+                  list: selectedList,
+                );
+                final totalUnreadCount = activeItems.fold<int>(
+                  0,
+                  (total, item) => total + item.unreadCount,
+                );
+                return _ChatsScaffold(
+                  items: items,
+                  loading:
+                      state.loading ||
+                      listsSnapshot.connectionState == ConnectionState.waiting,
+                  showDemoHint: false,
+                  showArchivedOnly: _showArchivedOnly,
+                  archivedCount: archivedItems.length,
+                  totalUnreadCount: totalUnreadCount,
+                  selectedFilter: _selectedFilter,
+                  selectedList: selectedList,
+                  availableLists: availableLists,
+                  emptyMessage: _showArchivedOnly
+                      ? 'No archived conversations.'
+                      : _buildEmptyMessage(),
+                  onOpenConversation: (id) => context.push('/chat/$id'),
+                  onConversationLongPress: (item, availableLists) =>
+                      _openConversationActions(item, availableLists),
+                  onSearch: () => context.push('/search'),
+                  onToggleArchivedView: () {
+                    setState(() {
+                      _showArchivedOnly = !_showArchivedOnly;
+                      _selectedList = null;
+                    });
+                  },
+                  onFilterChanged: _updateFilter,
+                  onListChanged: _updateList,
+                  onCreateList: () => _createList(availableLists),
+                  onManageLists: () => _openManageListsSheet(availableLists),
+                  onCreate: _openCreateConversationMenu,
+                );
+              },
+            ),
       ),
     );
   }
@@ -330,89 +337,314 @@ class _ChatListPageState extends State<ChatListPage> {
     required List<String> explicitLists,
     required List<ChatDiscoveryItem> items,
   }) {
-    return _normalizeListNames([
-      ...explicitLists,
-      ...collectChatLists(items),
-    ]);
+    return _normalizeListNames([...explicitLists, ...collectChatLists(items)]);
   }
 
-  Future<void> _createList(List<String> existingLists) async {
-    final controller = TextEditingController();
+  Future<String?> _showListNameDialog({
+    required String title,
+    required String confirmLabel,
+    String? initialValue,
+  }) async {
+    final controller = TextEditingController(text: initialValue ?? '');
     try {
-      final createdName = await showDialog<String>(
+      final submittedName = await showDialog<String>(
         context: context,
-        builder: (context) => AlertDialog(
-          title: const Text('Create list'),
-          content: TextField(
-            controller: controller,
-            autofocus: true,
-            textInputAction: TextInputAction.done,
-            decoration: const InputDecoration(
-              hintText: 'Example: Family, Work, VIP',
-            ),
-            onSubmitted: (_) => Navigator.of(
-              context,
-            ).pop(_normalizeSingleListName(controller.text)),
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.of(context).pop(),
-              child: const Text('Cancel'),
-            ),
-            FilledButton(
-              onPressed: () => Navigator.of(
-                context,
+        builder: (dialogContext) {
+          return AlertDialog(
+            title: Text(title),
+            content: TextField(
+              controller: controller,
+              autofocus: true,
+              textInputAction: TextInputAction.done,
+              decoration: const InputDecoration(
+                hintText: 'Example: Family, Work, VIP',
+              ),
+              onSubmitted: (_) => Navigator.of(
+                dialogContext,
               ).pop(_normalizeSingleListName(controller.text)),
-              child: const Text('Create'),
             ),
-          ],
-        ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.of(dialogContext).pop(),
+                child: const Text('Cancel'),
+              ),
+              FilledButton(
+                onPressed: () => Navigator.of(
+                  dialogContext,
+                ).pop(_normalizeSingleListName(controller.text)),
+                child: Text(confirmLabel),
+              ),
+            ],
+          );
+        },
       );
-
-      final normalizedName = _normalizeSingleListName(createdName);
-      if (!mounted || normalizedName == null) {
-        return;
-      }
-
-      if (existingLists.any(
-        (list) => list.toLowerCase() == normalizedName.toLowerCase(),
-      )) {
-        setState(() => _selectedList = normalizedName);
-        return;
-      }
-
-      if (_hasWiredChats) {
-        final repository = _resolveConversationRepository();
-        if (repository == null) {
-          _showSnack('Conversation service is unavailable right now');
-          return;
-        }
-        final result = await repository.createConversationList(
-          name: normalizedName,
-        );
-        if (!mounted) {
-          return;
-        }
-        if (result is Success<String>) {
-          setState(() {
-            _selectedList = result.value;
-            _localLists = _normalizeListNames([..._localLists, result.value]);
-          });
-          _showSnack('List created');
-          return;
-        }
-        _showSnack(result.error?.message ?? 'Failed to create list');
-        return;
-      }
-
-      setState(() {
-        _localLists = _normalizeListNames([..._localLists, normalizedName]);
-        _selectedList = normalizedName;
-      });
-      _showSnack('List created');
+      return _normalizeSingleListName(submittedName);
     } finally {
       controller.dispose();
     }
+  }
+
+  Future<void> _createList(List<String> existingLists) async {
+    final normalizedName = await _showListNameDialog(
+      title: 'Create list',
+      confirmLabel: 'Create',
+    );
+    if (!mounted || normalizedName == null) {
+      return;
+    }
+
+    if (existingLists.any(
+      (list) => list.toLowerCase() == normalizedName.toLowerCase(),
+    )) {
+      setState(() => _selectedList = normalizedName);
+      return;
+    }
+
+    if (_hasWiredChats) {
+      final repository = _resolveConversationRepository();
+      if (repository == null) {
+        _showSnack('Conversation service is unavailable right now');
+        return;
+      }
+      final result = await repository.createConversationList(
+        name: normalizedName,
+      );
+      if (!mounted) {
+        return;
+      }
+      if (result is Success<String>) {
+        setState(() {
+          _selectedList = result.value;
+          _localLists = _normalizeListNames([result.value, ...existingLists]);
+        });
+        _showSnack('List created');
+        return;
+      }
+      _showSnack(result.error?.message ?? 'Failed to create list');
+      return;
+    }
+
+    setState(() {
+      _localLists = _normalizeListNames([normalizedName, ...existingLists]);
+      _selectedList = normalizedName;
+    });
+    _showSnack('List created');
+  }
+
+  Future<void> _openManageListsSheet(List<String> availableLists) async {
+    await BottomNavVisibilityController.runWithHidden(
+      () => showModalBottomSheet<void>(
+        context: context,
+        isScrollControlled: true,
+        useSafeArea: true,
+        builder: (sheetContext) => _ManageListsSheet(
+          initialLists: availableLists,
+          onRename: (currentName, activeLists) => _renameList(
+            currentName: currentName,
+            availableLists: activeLists,
+          ),
+          onDelete: (name, activeLists) =>
+              _deleteList(name: name, availableLists: activeLists),
+          onReorder: _reorderLists,
+        ),
+      ),
+    );
+  }
+
+  Future<String?> _renameList({
+    required String currentName,
+    required List<String> availableLists,
+  }) async {
+    final normalizedName = await _showListNameDialog(
+      title: 'Rename list',
+      confirmLabel: 'Save',
+      initialValue: currentName,
+    );
+    if (!mounted || normalizedName == null) {
+      return null;
+    }
+
+    final currentKey = currentName.trim().toLowerCase();
+    final nextKey = normalizedName.toLowerCase();
+    final duplicateExists = availableLists.any(
+      (list) =>
+          list.toLowerCase() == nextKey && list.toLowerCase() != currentKey,
+    );
+    if (duplicateExists) {
+      _showSnack('A list with this name already exists');
+      return null;
+    }
+
+    if (_hasWiredChats) {
+      final repository = _resolveConversationRepository();
+      if (repository == null) {
+        _showSnack('Conversation service is unavailable right now');
+        return null;
+      }
+      final result = await repository.renameConversationList(
+        currentName: currentName,
+        newName: normalizedName,
+      );
+      if (!mounted) {
+        return null;
+      }
+      if (result is! Success<String>) {
+        _showSnack(result.error?.message ?? 'Failed to rename list');
+        return null;
+      }
+    }
+
+    final updatedLists = _replaceListNames(
+      availableLists,
+      source: currentName,
+      target: normalizedName,
+    );
+    setState(() {
+      _applyListMutationToState(
+        source: currentName,
+        target: normalizedName,
+        updatedLists: updatedLists,
+      );
+    });
+    _showSnack('List renamed');
+    return normalizedName;
+  }
+
+  Future<bool> _deleteList({
+    required String name,
+    required List<String> availableLists,
+  }) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Delete list'),
+        content: Text('Delete "$name" from all your chats?'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(dialogContext).pop(false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(dialogContext).pop(true),
+            child: const Text('Delete'),
+          ),
+        ],
+      ),
+    );
+    if (!mounted || confirmed != true) {
+      return false;
+    }
+
+    if (_hasWiredChats) {
+      final repository = _resolveConversationRepository();
+      if (repository == null) {
+        _showSnack('Conversation service is unavailable right now');
+        return false;
+      }
+      final result = await repository.deleteConversationList(name: name);
+      if (!mounted) {
+        return false;
+      }
+      if (result is! Success<void>) {
+        _showSnack(result.error?.message ?? 'Failed to delete list');
+        return false;
+      }
+    }
+
+    final updatedLists = _replaceListNames(availableLists, source: name);
+    setState(() {
+      _applyListMutationToState(source: name, updatedLists: updatedLists);
+    });
+    _showSnack('List deleted');
+    return true;
+  }
+
+  Future<bool> _reorderLists(List<String> orderedLists) async {
+    final normalizedOrder = _normalizeListNames(orderedLists);
+    if (_hasWiredChats) {
+      final repository = _resolveConversationRepository();
+      if (repository == null) {
+        _showSnack('Conversation service is unavailable right now');
+        return false;
+      }
+      final result = await repository.reorderConversationLists(
+        orderedNames: normalizedOrder,
+      );
+      if (!mounted) {
+        return false;
+      }
+      if (result is! Success<void>) {
+        _showSnack(result.error?.message ?? 'Failed to reorder lists');
+        return false;
+      }
+    }
+
+    if (!mounted) {
+      return false;
+    }
+    setState(() {
+      _localLists = normalizedOrder;
+    });
+    return true;
+  }
+
+  void _applyListMutationToState({
+    required String source,
+    String? target,
+    required List<String> updatedLists,
+  }) {
+    _localLists = updatedLists;
+    if (_matchesListName(_selectedList, source)) {
+      _selectedList = target;
+    }
+    _applyListMutationToOverrides(
+      source: source,
+      target: target,
+      sourceItems: _hasWiredChats ? const <ChatDiscoveryItem>[] : _demoItems,
+    );
+  }
+
+  void _applyListMutationToOverrides({
+    required String source,
+    String? target,
+    required List<ChatDiscoveryItem> sourceItems,
+  }) {
+    final nextOverrides = <String, List<String>>{};
+    for (final entry in _listOverrides.entries) {
+      nextOverrides[entry.key] = _replaceListNames(
+        entry.value,
+        source: source,
+        target: target,
+      );
+    }
+
+    for (final item in sourceItems) {
+      final currentLists = nextOverrides[item.conversationId] ?? item.lists;
+      if (!_containsListName(currentLists, source)) {
+        continue;
+      }
+      final updatedLists = _replaceListNames(
+        currentLists,
+        source: source,
+        target: target,
+      );
+      if (_listsMatch(updatedLists, item.lists)) {
+        nextOverrides.remove(item.conversationId);
+      } else {
+        nextOverrides[item.conversationId] = updatedLists;
+      }
+    }
+
+    _listOverrides
+      ..clear()
+      ..addAll(nextOverrides);
+  }
+
+  bool _matchesListName(String? value, String candidate) {
+    if (value == null) {
+      return false;
+    }
+    return value.trim().toLowerCase() == candidate.trim().toLowerCase();
   }
 
   void _showSnack(String message) {
@@ -489,9 +721,7 @@ class _ChatListPageState extends State<ChatListPage> {
     setState(() => _selectedList = list);
   }
 
-  List<ChatDiscoveryItem> _applyListOverrides(
-    List<ChatDiscoveryItem> items,
-  ) {
+  List<ChatDiscoveryItem> _applyListOverrides(List<ChatDiscoveryItem> items) {
     if (_listOverrides.isEmpty) {
       return items;
     }
@@ -529,12 +759,12 @@ class _ChatListPageState extends State<ChatListPage> {
   }
 
   bool _listsMatch(List<String> left, List<String> right) {
-    final leftSet = _normalizeListNames(left)
-        .map((value) => value.toLowerCase())
-        .toSet();
-    final rightSet = _normalizeListNames(right)
-        .map((value) => value.toLowerCase())
-        .toSet();
+    final leftSet = _normalizeListNames(
+      left,
+    ).map((value) => value.toLowerCase()).toSet();
+    final rightSet = _normalizeListNames(
+      right,
+    ).map((value) => value.toLowerCase()).toSet();
     if (leftSet.length != rightSet.length) {
       return false;
     }
@@ -810,6 +1040,7 @@ class _ChatsScaffold extends StatelessWidget {
     required this.onFilterChanged,
     required this.onListChanged,
     required this.onCreateList,
+    required this.onManageLists,
     required this.onCreate,
   });
 
@@ -831,6 +1062,7 @@ class _ChatsScaffold extends StatelessWidget {
   final ValueChanged<ChatListFilter> onFilterChanged;
   final ValueChanged<String?> onListChanged;
   final VoidCallback onCreateList;
+  final VoidCallback onManageLists;
   final VoidCallback onCreate;
 
   @override
@@ -877,6 +1109,7 @@ class _ChatsScaffold extends StatelessWidget {
                   onFilterChanged: onFilterChanged,
                   onListChanged: onListChanged,
                   onCreateList: onCreateList,
+                  onManageLists: onManageLists,
                 ),
                 Expanded(
                   child: items.isEmpty
@@ -897,10 +1130,8 @@ class _ChatsScaffold extends StatelessWidget {
                               item: item,
                               onTap: () =>
                                   onOpenConversation(item.conversationId),
-                              onLongPress: () => onConversationLongPress(
-                                item,
-                                availableLists,
-                              ),
+                              onLongPress: () =>
+                                  onConversationLongPress(item, availableLists),
                             );
                           },
                         ),
@@ -920,7 +1151,6 @@ class _ChatsScaffold extends StatelessWidget {
   }
 }
 
-
 class _ChatFilterBar extends StatelessWidget {
   const _ChatFilterBar({
     required this.selectedFilter,
@@ -929,6 +1159,7 @@ class _ChatFilterBar extends StatelessWidget {
     required this.onFilterChanged,
     required this.onListChanged,
     required this.onCreateList,
+    required this.onManageLists,
   });
 
   final ChatListFilter selectedFilter;
@@ -937,13 +1168,14 @@ class _ChatFilterBar extends StatelessWidget {
   final ValueChanged<ChatListFilter> onFilterChanged;
   final ValueChanged<String?> onListChanged;
   final VoidCallback onCreateList;
+  final VoidCallback onManageLists;
 
   @override
   Widget build(BuildContext context) {
     final palette = _FloatingChatsPalette.of(context);
     final screenWidth = MediaQuery.of(context).size.width;
     final isSmallScreen = screenWidth < 600;
-    
+
     return Padding(
       padding: const EdgeInsets.fromLTRB(16, 6, 16, 8),
       child: DecoratedBox(
@@ -1013,11 +1245,16 @@ class _ChatFilterBar extends StatelessWidget {
                     onTap: onCreateList,
                     tooltip: 'Create list',
                   ),
+                  const SizedBox(width: 8),
+                  _FloatingIconPill(
+                    icon: Icons.tune,
+                    onTap: onManageLists,
+                    tooltip: 'Manage lists',
+                  ),
                 ],
               ),
               const SizedBox(height: 6),
-              _buildResponsiveListsRow(
-                isSmallScreen: isSmallScreen,
+              _buildListsRow(
                 selectedList: selectedList,
                 availableLists: availableLists,
                 onListChanged: onListChanged,
@@ -1034,22 +1271,15 @@ class _ChatFilterBar extends StatelessWidget {
     required List<Widget> children,
   }) {
     if (isSmallScreen) {
-      return Wrap(
-        spacing: 8,
-        runSpacing: 8,
-        children: children,
-      );
+      return Wrap(spacing: 8, runSpacing: 8, children: children);
     }
     return SingleChildScrollView(
       scrollDirection: Axis.horizontal,
-      child: Row(
-        children: children,
-      ),
+      child: Row(children: children),
     );
   }
 
-  Widget _buildResponsiveListsRow({
-    required bool isSmallScreen,
+  Widget _buildListsRow({
     required String? selectedList,
     required List<String> availableLists,
     required ValueChanged<String?> onListChanged,
@@ -1073,18 +1303,9 @@ class _ChatFilterBar extends StatelessWidget {
       ],
     ];
 
-    if (isSmallScreen) {
-      return Wrap(
-        spacing: 8,
-        runSpacing: 8,
-        children: listPills.where((w) => w is! SizedBox).toList(),
-      );
-    }
     return SingleChildScrollView(
       scrollDirection: Axis.horizontal,
-      child: Row(
-        children: listPills,
-      ),
+      child: Row(children: listPills),
     );
   }
 }
@@ -1384,19 +1605,231 @@ class _ResponsiveActionSheet extends StatelessWidget {
     final bottomPadding = MediaQuery.of(context).viewInsets.bottom;
     // Extra padding so the floating nav never covers the sheet actions.
     final totalBottomPadding = max(80.0, bottomPadding + 80.0);
-    
+
     return ConstrainedBox(
       constraints: BoxConstraints(maxHeight: maxHeight),
       child: SingleChildScrollView(
         child: Padding(
           padding: EdgeInsets.only(bottom: totalBottomPadding),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: children,
-          ),
+          child: Column(mainAxisSize: MainAxisSize.min, children: children),
         ),
       ),
     );
+  }
+}
+
+class _ManageListsSheet extends StatefulWidget {
+  const _ManageListsSheet({
+    required this.initialLists,
+    required this.onRename,
+    required this.onDelete,
+    required this.onReorder,
+  });
+
+  final List<String> initialLists;
+  final Future<String?> Function(String currentName, List<String> activeLists)
+  onRename;
+  final Future<bool> Function(String name, List<String> activeLists) onDelete;
+  final Future<bool> Function(List<String> orderedLists) onReorder;
+
+  @override
+  State<_ManageListsSheet> createState() => _ManageListsSheetState();
+}
+
+class _ManageListsSheetState extends State<_ManageListsSheet> {
+  late List<String> _lists;
+  bool _busy = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _lists = List<String>.of(widget.initialLists);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final palette = _FloatingChatsPalette.of(context);
+    final bottomInset = MediaQuery.of(context).viewInsets.bottom;
+    final maxHeight = MediaQuery.of(context).size.height * 0.82;
+
+    return ConstrainedBox(
+      constraints: BoxConstraints(maxHeight: maxHeight),
+      child: Padding(
+        padding: EdgeInsets.fromLTRB(20, 20, 20, bottomInset + 20),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              'Manage lists',
+              style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                fontWeight: FontWeight.w800,
+                color: palette.primaryTextColor,
+              ),
+            ),
+            const SizedBox(height: 8),
+            Text(
+              'Rename, delete, or drag your lists to reorder them.',
+              style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                color: palette.secondaryTextColor,
+              ),
+            ),
+            if (_busy) ...[
+              const SizedBox(height: 16),
+              const LinearProgressIndicator(),
+            ],
+            const SizedBox(height: 18),
+            Flexible(
+              child: _lists.isEmpty
+                  ? Container(
+                      width: double.infinity,
+                      padding: const EdgeInsets.all(16),
+                      decoration: BoxDecoration(
+                        color: palette.pillColor,
+                        borderRadius: BorderRadius.circular(20),
+                        border: Border.all(color: palette.borderColor),
+                      ),
+                      child: Text(
+                        'No lists yet. Create one first from the + button.',
+                        style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                          color: palette.secondaryTextColor,
+                        ),
+                      ),
+                    )
+                  : ReorderableListView.builder(
+                      buildDefaultDragHandles: false,
+                      itemCount: _lists.length,
+                      onReorder: _busy ? (_, _) {} : _handleReorder,
+                      itemBuilder: (context, index) {
+                        final list = _lists[index];
+                        return Container(
+                          key: ValueKey('managed_list_$list'),
+                          margin: const EdgeInsets.only(bottom: 10),
+                          decoration: BoxDecoration(
+                            color: palette.cardColor,
+                            borderRadius: BorderRadius.circular(20),
+                            border: Border.all(color: palette.borderColor),
+                          ),
+                          child: ListTile(
+                            contentPadding: const EdgeInsets.symmetric(
+                              horizontal: 16,
+                              vertical: 4,
+                            ),
+                            title: Text(
+                              list,
+                              style: Theme.of(context).textTheme.titleSmall
+                                  ?.copyWith(
+                                    fontWeight: FontWeight.w700,
+                                    color: palette.primaryTextColor,
+                                  ),
+                            ),
+                            subtitle: const Text('Drag to change order'),
+                            trailing: Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                IconButton(
+                                  tooltip: 'Rename',
+                                  onPressed: _busy
+                                      ? null
+                                      : () => _handleRename(list),
+                                  icon: const Icon(Icons.edit_outlined),
+                                ),
+                                IconButton(
+                                  tooltip: 'Delete',
+                                  onPressed: _busy
+                                      ? null
+                                      : () => _handleDelete(list),
+                                  icon: const Icon(Icons.delete_outline),
+                                ),
+                                ReorderableDragStartListener(
+                                  index: index,
+                                  child: Padding(
+                                    padding: const EdgeInsets.all(8),
+                                    child: Icon(
+                                      Icons.drag_handle,
+                                      color: palette.secondaryTextColor,
+                                    ),
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        );
+                      },
+                    ),
+            ),
+            const SizedBox(height: 18),
+            Align(
+              alignment: Alignment.centerRight,
+              child: TextButton(
+                onPressed: _busy ? null : () => Navigator.of(context).pop(),
+                child: const Text('Close'),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Future<void> _handleRename(String currentName) async {
+    final renamed = await _runBusy(
+      () => widget.onRename(currentName, List<String>.of(_lists)),
+    );
+    if (!mounted || renamed == null) {
+      return;
+    }
+    setState(() {
+      _lists = _replaceListNames(_lists, source: currentName, target: renamed);
+    });
+  }
+
+  Future<void> _handleDelete(String name) async {
+    final deleted = await _runBusy(
+      () => widget.onDelete(name, List<String>.of(_lists)),
+    );
+    if (!mounted || deleted != true) {
+      return;
+    }
+    setState(() {
+      _lists = _replaceListNames(_lists, source: name);
+    });
+  }
+
+  Future<void> _handleReorder(int oldIndex, int newIndex) async {
+    if (_busy) {
+      return;
+    }
+    final previous = List<String>.of(_lists);
+    setState(() {
+      if (newIndex > oldIndex) {
+        newIndex -= 1;
+      }
+      final item = _lists.removeAt(oldIndex);
+      _lists.insert(newIndex, item);
+    });
+    final reordered = List<String>.of(_lists);
+    final success = await _runBusy(() => widget.onReorder(reordered));
+    if (!mounted || success == true) {
+      return;
+    }
+    setState(() {
+      _lists = previous;
+    });
+  }
+
+  Future<T?> _runBusy<T>(Future<T> Function() operation) async {
+    if (_busy) {
+      return null;
+    }
+    setState(() => _busy = true);
+    try {
+      return await operation();
+    } finally {
+      if (mounted) {
+        setState(() => _busy = false);
+      }
+    }
   }
 }
 
@@ -1575,6 +2008,42 @@ class _FloatingChatsPalette {
           : const Color(0xFF5B6B7B),
     );
   }
+}
+
+bool _containsListName(Iterable<String> values, String candidate) {
+  final normalizedCandidate = candidate.trim().toLowerCase();
+  if (normalizedCandidate.isEmpty) {
+    return false;
+  }
+  for (final value in values) {
+    if (value.trim().toLowerCase() == normalizedCandidate) {
+      return true;
+    }
+  }
+  return false;
+}
+
+List<String> _replaceListNames(
+  Iterable<String> values, {
+  required String source,
+  String? target,
+}) {
+  final normalizedSource = source.trim().toLowerCase();
+  if (normalizedSource.isEmpty) {
+    return _normalizeListNames(values);
+  }
+
+  final replaced = <String>[];
+  for (final value in values) {
+    if (value.trim().toLowerCase() == normalizedSource) {
+      if (target != null && target.trim().isNotEmpty) {
+        replaced.add(target);
+      }
+      continue;
+    }
+    replaced.add(value);
+  }
+  return _normalizeListNames(replaced);
 }
 
 List<String> _normalizeListNames(Iterable<String> values) {

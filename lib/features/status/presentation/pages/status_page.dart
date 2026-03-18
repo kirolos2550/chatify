@@ -1,6 +1,5 @@
 import 'dart:async';
 import 'dart:io';
-import 'dart:typed_data';
 
 import 'package:chatify/app/di/injection.dart';
 import 'package:chatify/core/common/bottom_nav_visibility.dart';
@@ -393,10 +392,14 @@ class _StatusPageState extends State<StatusPage> {
       backgroundColor: input.backgroundColor,
       textColor: input.textColor,
       musicUrl: musicUrl,
-      musicDurationSeconds:
-          musicUrl == null ? null : StatusPayloadDefaults.musicDurationSeconds,
+      musicDurationSeconds: musicUrl == null
+          ? null
+          : StatusPayloadDefaults.musicDurationSeconds,
     );
-    return _StatusDraft(payload: payload, mediaType: StatusPayloadType.text.name);
+    return _StatusDraft(
+      payload: payload,
+      mediaType: StatusPayloadType.text.name,
+    );
   }
 
   Future<_StatusDraft?> _composeMediaStatus(StatusPayloadType type) async {
@@ -423,9 +426,8 @@ class _StatusPageState extends State<StatusPage> {
 
     final input = await showDialog<_MediaStatusInput>(
       context: context,
-      builder: (context) => _MediaStatusDialog(
-        allowMusic: type == StatusPayloadType.image,
-      ),
+      builder: (context) =>
+          _MediaStatusDialog(allowMusic: type == StatusPayloadType.image),
     );
     if (!mounted || input == null) {
       return null;
@@ -513,8 +515,9 @@ class _StatusPageState extends State<StatusPage> {
   }
 
   Future<PlatformFile?> _pickMediaFile(StatusPayloadType type) async {
-    final extensions =
-        type == StatusPayloadType.image ? _imageExtensions : _videoExtensions;
+    final extensions = type == StatusPayloadType.image
+        ? _imageExtensions
+        : _videoExtensions;
     final result = await FilePicker.platform.pickFiles(
       type: FileType.custom,
       allowedExtensions: extensions,
@@ -669,17 +672,9 @@ class _StatusPageState extends State<StatusPage> {
       case StatusPayloadType.text:
         return _editTextStatus(entry, payload);
       case StatusPayloadType.image:
-        return _editMediaStatus(
-          entry,
-          payload,
-          allowMusic: true,
-        );
+        return _editMediaStatus(entry, payload, allowMusic: true);
       case StatusPayloadType.video:
-        return _editMediaStatus(
-          entry,
-          payload,
-          allowMusic: false,
-        );
+        return _editMediaStatus(entry, payload, allowMusic: false);
     }
   }
 
@@ -730,8 +725,9 @@ class _StatusPageState extends State<StatusPage> {
       backgroundColor: input.backgroundColor,
       textColor: input.textColor,
       musicUrl: musicUrl,
-      musicDurationSeconds:
-          musicUrl == null ? null : StatusPayloadDefaults.musicDurationSeconds,
+      musicDurationSeconds: musicUrl == null
+          ? null
+          : StatusPayloadDefaults.musicDurationSeconds,
     );
     final success = await _persistStatusUpdate(entry, updated);
     return success ? updated : null;
@@ -782,8 +778,9 @@ class _StatusPageState extends State<StatusPage> {
       mediaUrl: payload.mediaUrl,
       caption: input.caption?.trim(),
       musicUrl: musicUrl,
-      musicDurationSeconds:
-          musicUrl == null ? null : StatusPayloadDefaults.musicDurationSeconds,
+      musicDurationSeconds: musicUrl == null
+          ? null
+          : StatusPayloadDefaults.musicDurationSeconds,
     );
     final success = await _persistStatusUpdate(entry, updated);
     return success ? updated : null;
@@ -875,33 +872,36 @@ class _StatusScaffold extends StatelessWidget {
   final void Function(
     List<_StatusEntryView> entries,
     Set<String>? allowedViewerIds,
-  ) onOpenMyStatuses;
+  )
+  onOpenMyStatuses;
 
   @override
   Widget build(BuildContext context) {
     final bottomClearance = floatingNavBarClearance;
     final resolvedUid = currentUserId?.trim();
-    final mappedEntries = entries
-        .map(
-          (entry) => _StatusEntryView(
-            entry: entry,
-            payload: StatusPayload.fromRaw(entry.payload),
-          ),
-        )
-        .toList(growable: false)
-      ..sort(
-        (left, right) => right.entry.createdAt.compareTo(left.entry.createdAt),
-      );
+    final mappedEntries =
+        entries
+            .map(
+              (entry) => _StatusEntryView(
+                entry: entry,
+                payload: StatusPayload.fromRaw(entry.payload),
+              ),
+            )
+            .toList(growable: false)
+          ..sort(
+            (left, right) =>
+                right.entry.createdAt.compareTo(left.entry.createdAt),
+          );
     final myEntries = resolvedUid == null || resolvedUid.isEmpty
         ? <_StatusEntryView>[]
         : mappedEntries
-            .where((entry) => entry.entry.author.trim() == resolvedUid)
-            .toList(growable: false);
+              .where((entry) => entry.entry.author.trim() == resolvedUid)
+              .toList(growable: false);
     final otherEntries = resolvedUid == null || resolvedUid.isEmpty
         ? mappedEntries
         : mappedEntries
-            .where((entry) => entry.entry.author.trim() != resolvedUid)
-            .toList(growable: false);
+              .where((entry) => entry.entry.author.trim() != resolvedUid)
+              .toList(growable: false);
     final tiles = <Widget>[
       _MyStatusHeaderTile(
         hasEntries: myEntries.isNotEmpty,
@@ -910,10 +910,7 @@ class _StatusScaffold extends StatelessWidget {
         onOpenStatuses: () => onOpenMyStatuses(myEntries, allowedViewerIds),
       ),
       for (final entry in otherEntries)
-        _StatusEntryTile(
-          entry: entry,
-          onOpenStatus: () => onOpenStatus(entry),
-        ),
+        _StatusEntryTile(entry: entry, onOpenStatus: () => onOpenStatus(entry)),
     ];
     return Scaffold(
       appBar: AppBar(title: const Text('Status')),
@@ -969,9 +966,7 @@ class _MyStatusHeaderTile extends StatelessWidget {
         ? '$entryCount update${entryCount == 1 ? '' : 's'}'
         : 'Use + to add a status update';
     return ListTile(
-      leading: CircleAvatar(
-        child: Icon(hasEntries ? Icons.person : Icons.add),
-      ),
+      leading: CircleAvatar(child: Icon(hasEntries ? Icons.person : Icons.add)),
       title: const Text('My status'),
       subtitle: Text(subtitle),
       onTap: hasEntries ? onOpenStatuses : onAddStatus,
@@ -997,16 +992,18 @@ class _MyStatusEntryTile extends StatelessWidget {
     final stream = Firebase.apps.isEmpty || entry.entry.id.trim().isEmpty
         ? null
         : FirebaseFirestore.instance
-            .collection(FirebasePaths.status)
-            .doc(entry.entry.author)
-            .collection(FirebasePaths.items)
-            .doc(entry.entry.id)
-            .snapshots();
+              .collection(FirebasePaths.status)
+              .doc(entry.entry.author)
+              .collection(FirebasePaths.items)
+              .doc(entry.entry.id)
+              .snapshots();
     return StreamBuilder<DocumentSnapshot<Map<String, dynamic>>>(
       stream: stream,
       builder: (context, snapshot) {
-        final viewers =
-            _viewerIdsFromSnapshot(snapshot.data, entry.entry.author);
+        final viewers = _viewerIdsFromSnapshot(
+          snapshot.data,
+          entry.entry.author,
+        );
         final filtered = allowedViewerIds == null
             ? viewers
             : viewers.where(allowedViewerIds!.contains).toList();
@@ -1027,10 +1024,7 @@ class _MyStatusEntryTile extends StatelessWidget {
 }
 
 class _StatusEntryTile extends StatelessWidget {
-  const _StatusEntryTile({
-    required this.entry,
-    required this.onOpenStatus,
-  });
+  const _StatusEntryTile({required this.entry, required this.onOpenStatus});
 
   final _StatusEntryView entry;
   final VoidCallback onOpenStatus;
@@ -1168,7 +1162,9 @@ class _MyStatusListPageState extends State<_MyStatusListPage> {
                   context: context,
                   builder: (context) => AlertDialog(
                     title: const Text('Delete status?'),
-                    content: const Text('This status will be removed for everyone.'),
+                    content: const Text(
+                      'This status will be removed for everyone.',
+                    ),
                     actions: [
                       TextButton(
                         onPressed: () => Navigator.of(context).pop(false),
@@ -1201,10 +1197,9 @@ class _MyStatusListPageState extends State<_MyStatusListPage> {
 }
 
 class _AuthorLabel extends StatelessWidget {
-  const _AuthorLabel({required this.authorId, this.style});
+  const _AuthorLabel({required this.authorId});
 
   final String authorId;
-  final TextStyle? style;
 
   @override
   Widget build(BuildContext context) {
@@ -1212,24 +1207,15 @@ class _AuthorLabel extends StatelessWidget {
       future: _resolveAuthorLabel(authorId),
       builder: (context, snapshot) {
         final label = snapshot.data?.trim();
-        final resolved =
-            (label == null || label.isEmpty) ? authorId : label;
-        return Text(
-          resolved,
-          style: style,
-          maxLines: 1,
-          overflow: TextOverflow.ellipsis,
-        );
+        final resolved = (label == null || label.isEmpty) ? authorId : label;
+        return Text(resolved, maxLines: 1, overflow: TextOverflow.ellipsis);
       },
     );
   }
 }
 
 class _ViewersButton extends StatelessWidget {
-  const _ViewersButton({
-    required this.count,
-    required this.onTap,
-  });
+  const _ViewersButton({required this.count, required this.onTap});
 
   final int count;
   final VoidCallback onTap;
@@ -1344,10 +1330,7 @@ String _formatStatusAge(DateTime createdAt) {
 }
 
 class _StatusSummaryTile extends StatelessWidget {
-  const _StatusSummaryTile({
-    required this.payload,
-    required this.createdAt,
-  });
+  const _StatusSummaryTile({required this.payload, required this.createdAt});
 
   final StatusPayload payload;
   final DateTime createdAt;
@@ -1382,10 +1365,7 @@ class _StatusSummaryTile extends StatelessWidget {
           ],
         ),
         const SizedBox(height: 2),
-        Text(
-          age,
-          style: Theme.of(context).textTheme.bodySmall,
-        ),
+        Text(age, style: Theme.of(context).textTheme.bodySmall),
       ],
     );
   }
@@ -1472,7 +1452,8 @@ class _StatusViewerState extends State<_StatusViewer> {
       try {
         await player.setUrl(url);
         await player.play();
-        final durationSeconds = widget.entry.payload.musicDurationSeconds ??
+        final durationSeconds =
+            widget.entry.payload.musicDurationSeconds ??
             StatusPayloadDefaults.musicDurationSeconds;
         _audioStopper = Timer(
           Duration(seconds: durationSeconds),
@@ -1530,10 +1511,9 @@ class _StatusViewerState extends State<_StatusViewer> {
                           future: _authorLabelFuture,
                           builder: (context, snapshot) {
                             final label = snapshot.data?.trim();
-                            final resolved =
-                                (label == null || label.isEmpty)
-                                    ? widget.entry.entry.author
-                                    : label;
+                            final resolved = (label == null || label.isEmpty)
+                                ? widget.entry.entry.author
+                                : label;
                             return Text(
                               resolved,
                               style: const TextStyle(
@@ -1589,8 +1569,7 @@ class _StatusViewerState extends State<_StatusViewer> {
       case StatusPayloadType.text:
         final background =
             payload.backgroundColor ?? StatusPayloadDefaults.backgroundColor;
-        final foreground =
-            payload.textColor ?? StatusPayloadDefaults.textColor;
+        final foreground = payload.textColor ?? StatusPayloadDefaults.textColor;
         return Container(
           color: background,
           alignment: Alignment.center,
@@ -1762,14 +1741,14 @@ class _TextStatusDialogState extends State<_TextStatusDialog> {
         FilledButton(
           onPressed: canSubmit
               ? () => Navigator.of(context).pop(
-                    _TextStatusInput(
-                      text: _controller.text,
-                      backgroundColor: _backgroundColor,
-                      textColor: _textColor,
-                      musicFile: _musicFile,
-                      removeExistingMusic: _removeExistingMusic,
-                    ),
-                  )
+                  _TextStatusInput(
+                    text: _controller.text,
+                    backgroundColor: _backgroundColor,
+                    textColor: _textColor,
+                    musicFile: _musicFile,
+                    removeExistingMusic: _removeExistingMusic,
+                  ),
+                )
               : null,
           child: const Text('Post'),
         ),
@@ -1810,10 +1789,7 @@ class _TextStatusDialogState extends State<_TextStatusDialog> {
     final hasExisting = widget.existingMusicUrl?.trim().isNotEmpty == true;
     if (_musicFile != null) {
       return [
-        TextButton(
-          onPressed: _pickMusic,
-          child: const Text('Replace'),
-        ),
+        TextButton(onPressed: _pickMusic, child: const Text('Replace')),
         IconButton(
           onPressed: () => setState(() => _musicFile = null),
           icon: const Icon(Icons.close),
@@ -1822,10 +1798,7 @@ class _TextStatusDialogState extends State<_TextStatusDialog> {
     }
     if (hasExisting && !_removeExistingMusic) {
       return [
-        TextButton(
-          onPressed: _pickMusic,
-          child: const Text('Replace'),
-        ),
+        TextButton(onPressed: _pickMusic, child: const Text('Replace')),
         TextButton(
           onPressed: () => setState(() => _removeExistingMusic = true),
           child: const Text('Remove'),
@@ -1840,12 +1813,7 @@ class _TextStatusDialogState extends State<_TextStatusDialog> {
         ),
       ];
     }
-    return [
-      TextButton(
-        onPressed: _pickMusic,
-        child: const Text('Add'),
-      ),
-    ];
+    return [TextButton(onPressed: _pickMusic, child: const Text('Add'))];
   }
 }
 
@@ -1971,10 +1939,7 @@ class _MediaStatusDialogState extends State<_MediaStatusDialog> {
     final hasExisting = widget.existingMusicUrl?.trim().isNotEmpty == true;
     if (_musicFile != null) {
       return [
-        TextButton(
-          onPressed: _pickMusic,
-          child: const Text('Replace'),
-        ),
+        TextButton(onPressed: _pickMusic, child: const Text('Replace')),
         IconButton(
           onPressed: () => setState(() => _musicFile = null),
           icon: const Icon(Icons.close),
@@ -1983,10 +1948,7 @@ class _MediaStatusDialogState extends State<_MediaStatusDialog> {
     }
     if (hasExisting && !_removeExistingMusic) {
       return [
-        TextButton(
-          onPressed: _pickMusic,
-          child: const Text('Replace'),
-        ),
+        TextButton(onPressed: _pickMusic, child: const Text('Replace')),
         TextButton(
           onPressed: () => setState(() => _removeExistingMusic = true),
           child: const Text('Remove'),
@@ -2001,12 +1963,7 @@ class _MediaStatusDialogState extends State<_MediaStatusDialog> {
         ),
       ];
     }
-    return [
-      TextButton(
-        onPressed: _pickMusic,
-        child: const Text('Add'),
-      ),
-    ];
+    return [TextButton(onPressed: _pickMusic, child: const Text('Add'))];
   }
 }
 

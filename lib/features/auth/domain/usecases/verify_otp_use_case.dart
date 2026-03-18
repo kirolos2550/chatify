@@ -4,9 +4,9 @@ import 'package:chatify/core/domain/usecases/use_case.dart';
 import 'package:injectable/injectable.dart';
 
 class VerifyOtpParams {
-  const VerifyOtpParams({required this.verificationId, required this.code});
+  const VerifyOtpParams({required this.otpSessionId, required this.code});
 
-  final String verificationId;
+  final String otpSessionId;
   final String code;
 }
 
@@ -19,7 +19,7 @@ class VerifyOtpUseCase implements UseCase<Result<void>, VerifyOtpParams> {
   @override
   Future<Result<void>> call(VerifyOtpParams params) {
     return _repository.verifyOtp(
-      verificationId: params.verificationId,
+      otpSessionId: params.otpSessionId,
       otpCode: params.code,
     );
   }

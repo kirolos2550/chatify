@@ -5,6 +5,7 @@ import 'package:chatify/core/common/app_logger.dart';
 import 'package:chatify/core/common/result.dart';
 import 'package:chatify/core/domain/entities/app_user.dart';
 import 'package:chatify/core/domain/repositories/auth_repository.dart';
+import 'package:chatify/features/auth/domain/usecases/fetch_latest_dev_otp_code_use_case.dart';
 import 'package:chatify/features/auth/domain/usecases/request_otp_use_case.dart';
 import 'package:chatify/features/auth/domain/usecases/verify_otp_use_case.dart';
 import 'package:chatify/features/auth/presentation/bloc/auth_cubit.dart';
@@ -16,7 +17,15 @@ class _FakeAuthRepository implements AuthRepository {
 
   @override
   Future<Result<String>> requestOtp({required String phoneNumber}) async {
-    return const Success('verification-id');
+    return const Success('otp-session-id');
+  }
+
+  @override
+  Future<Result<String?>> fetchLatestDevOtpCode({
+    required String phoneNumber,
+    String? otpSessionId,
+  }) async {
+    return const Success('123456');
   }
 
   @override
@@ -30,18 +39,18 @@ class _FakeAuthRepository implements AuthRepository {
   }
 
   @override
-  Future<Result<void>> updateProfile({
-    required String displayName,
-    String? about,
-    String? avatarUrl,
+  Future<Result<void>> verifyOtp({
+    required String otpSessionId,
+    required String otpCode,
   }) async {
     return const Success(null);
   }
 
   @override
-  Future<Result<void>> verifyOtp({
-    required String verificationId,
-    required String otpCode,
+  Future<Result<void>> updateProfile({
+    required String displayName,
+    String? about,
+    String? avatarUrl,
   }) async {
     return const Success(null);
   }
@@ -73,7 +82,11 @@ void main() {
     );
 
     final repo = _FakeAuthRepository();
-    final cubit = AuthCubit(RequestOtpUseCase(repo), VerifyOtpUseCase(repo));
+    final cubit = AuthCubit(
+      RequestOtpUseCase(repo),
+      VerifyOtpUseCase(repo),
+      FetchLatestDevOtpCodeUseCase(repo),
+    );
 
     await cubit.verifyOtp('123');
     final path = AppLogger.currentSessionLogPath;

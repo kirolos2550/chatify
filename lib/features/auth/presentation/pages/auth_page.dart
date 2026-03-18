@@ -1,4 +1,6 @@
+import 'package:chatify/app/bootstrap.dart';
 import 'package:chatify/app/di/injection.dart';
+import 'package:chatify/core/common/auth_runtime.dart';
 import 'package:chatify/core/common/app_logger.dart';
 import 'package:chatify/features/auth/presentation/bloc/auth_cubit.dart';
 import 'package:firebase_auth/firebase_auth.dart';
@@ -8,10 +10,6 @@ import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:go_router/go_router.dart';
 
-const bool _useFirebaseEmulators = bool.fromEnvironment(
-  'USE_FIREBASE_EMULATORS',
-  defaultValue: true,
-);
 const bool _allowDemoMode = bool.fromEnvironment(
   'ALLOW_DEMO_MODE',
   defaultValue: true,
@@ -29,6 +27,7 @@ class _AuthPageState extends State<AuthPage> {
   final TextEditingController _otpController = TextEditingController();
   AuthCubit? _authCubit;
   bool _sessionRedirectTriggered = false;
+  bool _refreshingRuntime = false;
 
   @override
   void dispose() {
@@ -76,6 +75,17 @@ class _AuthPageState extends State<AuthPage> {
             context.go('/home/chats');
             return;
           }
+          final devOtpCode = state.devOtpCode?.trim();
+          if (devOtpCode != null && devOtpCode.isNotEmpty) {
+            _otpController
+              ..text = devOtpCode
+              ..selection = TextSelection.collapsed(offset: devOtpCode.length);
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(content: Text('Test OTP auto-filled')),
+            );
+            context.read<AuthCubit>().consumeDevOtpCode();
+            return;
+          }
           if (state.status == AuthStatus.error && state.errorMessage != null) {
             AppLogger.breadcrumb(
               'auth.ui.error_shown',
@@ -89,21 +99,31 @@ class _AuthPageState extends State<AuthPage> {
           }
         },
         builder: (context, state) {
+          final authRuntime = AuthRuntimeController.current;
           final showOtpInput =
               state.status == AuthStatus.codeSent ||
               state.status == AuthStatus.verifyingCode ||
               state.canVerify;
           final sendingCode = state.status == AuthStatus.sendingCode;
           final verifyingCode = state.status == AuthStatus.verifyingCode;
+          final fetchingDevCode = state.fetchingDevCode;
+          final phoneOtpAvailable = !authRuntime.isUnavailable;
+          final inputBusy = sendingCode || verifyingCode || fetchingDevCode;
 
           return Scaffold(
             appBar: AppBar(title: const Text('Sign in')),
             body: _buildScrollableBody(
               children: [
+                _AuthRuntimeNotice(
+                  runtime: authRuntime,
+                  refreshing: _refreshingRuntime,
+                  onRetry: _retryRuntimeConnection,
+                ),
+                if (!authRuntime.isUnavailable) const SizedBox(height: 16),
                 TextField(
                   controller: _phoneController,
                   keyboardType: TextInputType.phone,
-                  enabled: !sendingCode && !verifyingCode,
+                  enabled: !inputBusy,
                   decoration: const InputDecoration(
                     labelText: 'Phone number',
                     hintText: '+2010XXXXXXXX',
@@ -116,29 +136,20 @@ class _AuthPageState extends State<AuthPage> {
                 ),
                 const SizedBox(height: 16),
                 FilledButton(
-                  onPressed: sendingCode || verifyingCode
+                  onPressed: !phoneOtpAvailable || inputBusy
                       ? null
                       : () => context.read<AuthCubit>().requestOtp(
                           _phoneController.text,
                         ),
                   child: Text(sendingCode ? 'Sending...' : 'Send OTP'),
                 ),
-                if (kDebugMode && _useFirebaseEmulators) ...[
-                  const SizedBox(height: 12),
-                  const Text(
-                    'You are running with Firebase emulators. '
-                    'To verify real phone numbers, run with '
-                    '--dart-define=USE_FIREBASE_EMULATORS=false.',
-                    style: TextStyle(fontSize: 12),
-                  ),
-                ],
                 if (showOtpInput) ...[
                   const SizedBox(height: 24),
                   TextField(
                     controller: _otpController,
                     keyboardType: TextInputType.number,
                     textInputAction: TextInputAction.done,
-                    enabled: !verifyingCode,
+                    enabled: !verifyingCode && !fetchingDevCode,
                     maxLength: 6,
                     decoration: const InputDecoration(
                       labelText: 'OTP code',
@@ -158,6 +169,26 @@ class _AuthPageState extends State<AuthPage> {
                           ),
                     child: Text(verifyingCode ? 'Verifying...' : 'Verify OTP'),
                   ),
+                  if (kDebugMode && authRuntime.isEmulatorOnly) ...[
+                    const SizedBox(height: 12),
+                    OutlinedButton(
+                      onPressed: fetchingDevCode
+                          ? null
+                          : () => context
+                                .read<AuthCubit>()
+                                .fetchLatestDevOtpCode(),
+                      child: Text(
+                        fetchingDevCode
+                            ? 'Fetching test code...'
+                            : 'Auto-fill test OTP',
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    Text(
+                      authRuntime.statusMessage,
+                      style: Theme.of(context).textTheme.bodySmall,
+                    ),
+                  ],
                 ],
                 if (_allowDemoMode) ...[
                   const SizedBox(height: 24),
@@ -218,5 +249,71 @@ class _AuthPageState extends State<AuthPage> {
     } catch (_) {
       return null;
     }
+  }
+
+  Future<void> _retryRuntimeConnection() async {
+    if (_refreshingRuntime) {
+      return;
+    }
+    setState(() {
+      _refreshingRuntime = true;
+    });
+    try {
+      await refreshFirebaseRuntime();
+    } finally {
+      if (mounted) {
+        setState(() {
+          _refreshingRuntime = false;
+        });
+      }
+    }
+  }
+}
+
+class _AuthRuntimeNotice extends StatelessWidget {
+  const _AuthRuntimeNotice({
+    required this.runtime,
+    required this.refreshing,
+    required this.onRetry,
+  });
+
+  final AuthRuntimeState runtime;
+  final bool refreshing;
+  final Future<void> Function() onRetry;
+
+  @override
+  Widget build(BuildContext context) {
+    if (!runtime.isUnavailable) {
+      return const SizedBox.shrink();
+    }
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        color: Theme.of(context).colorScheme.errorContainer,
+        borderRadius: BorderRadius.circular(16),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              runtime.statusMessage,
+              style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                color: Theme.of(context).colorScheme.onErrorContainer,
+              ),
+            ),
+            if (kDebugMode) ...[
+              const SizedBox(height: 12),
+              FilledButton.tonal(
+                onPressed: refreshing ? null : onRetry,
+                child: Text(
+                  refreshing ? 'Retrying...' : 'Retry emulator connection',
+                ),
+              ),
+            ],
+          ],
+        ),
+      ),
+    );
   }
 }
